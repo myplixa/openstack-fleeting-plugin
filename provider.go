@@ -11,7 +11,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/hashicorp/go-hclog"
 	"github.com/jinzhu/copier"
-	"github.com/sardinasystems/fleeting-plugin-openstack/internal/openstackclient"
+	"github.com/myplixa/openstack-fleeting-plugin/internal/openstackclient"
 
 	"gitlab.com/gitlab-org/fleeting/fleeting/provider"
 )
@@ -21,14 +21,17 @@ const MetadataKey = "fleeting-cluster"
 var _ provider.InstanceGroup = (*InstanceGroup)(nil)
 
 type InstanceGroup struct {
-	Cloud            string        `json:"cloud"`             // cloud to use
-	CloudsConfig     string        `json:"clouds_config"`     // optional: path to clouds.yaml
-	Name             string        `json:"name"`              // name of the cluster
-	NovaMicroversion string        `json:"nova_microversion"` // Microversion for the Nova client
-	ServerSpec       ExtCreateOpts `json:"server_spec"`       // instance creation spec
-	UseIgnition      bool          `json:"use_ignition"`      // Configure keys via Ignition (Fedora CoreOS / Flatcar)
-	BootTimeS        string        `json:"boot_time"`         // optional: wait some time before report machine as available
+	Cloud            string        `json:"cloud"`
+	CloudsConfig     string        `json:"clouds_config"`
+	Name             string        `json:"name"`
+	NovaMicroversion string        `json:"nova_microversion"`
+	ServerSpec       ExtCreateOpts `json:"server_spec"`
+	UseIgnition      bool          `json:"use_ignition"`
+	BootTimeS        string        `json:"boot_time"`
 	BootTime         time.Duration
+
+	VolumeType string `json:"volume_type,omitempty"`
+	VolumeSize int    `json:"volume_size,omitempty"`
 
 	client          openstackclient.Client
 	settings        provider.Settings
@@ -69,8 +72,6 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 		g.imgProps.Store(imgProps)
 	}
 
-	// log.With("creds", settings, "image", g.imgProps).Info("settings 1")
-
 	if !g.UseIgnition && !settings.UseStaticCredentials {
 		return provider.ProviderInfo{}, fmt.Errorf("only static credentials supported in Cloud-Init mode")
 	}
@@ -81,8 +82,6 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 			return provider.ProviderInfo{}, err
 		}
 	}
-
-	// log.With("creds", settings, "image", g.imgProps).Info("settings2")
 
 	if g.BootTimeS != "" {
 		g.BootTime, err = time.ParseDuration(g.BootTimeS)
@@ -118,19 +117,16 @@ func (g *InstanceGroup) Update(ctx context.Context, update func(instance string,
 
 		switch srv.Status {
 		case "BUILD", "MIGRATING", "PAUSED", "REBUILD":
-			// pass
 
 		case "DELETED", "SHUTOFF", "UNKNOWN":
 			state = provider.StateDeleting
 
 		case "ERROR":
-			// unsure if that's proper way...
 			lg.Warn("Instance is in ERROR state. Marking as a timeout.")
 			state = provider.StateTimeout
 
 		case "ACTIVE":
 			if srv.Created.Add(g.BootTime).Before(time.Now()) {
-				// treat all nodes running long enough as Running
 				state = provider.StateRunning
 			} else {
 				log, err := g.client.ShowServerConsoleOutput(ctx, srv.ID)
@@ -254,6 +250,25 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 		g.log.Debug("Image resolved by name", "image_name", spec.ImageName, "image_ref", spec.ImageRef)
 	}
 
+	if g.VolumeType != "" && g.VolumeSize > 0 {
+		if spec.ImageRef == "" {
+			return "", fmt.Errorf("volume_type/volume_size require server_spec.imageRef (or image_name) to be set")
+		}
+
+		spec.BlockDevice = []servers.BlockDevice{
+			{
+				SourceType:          servers.SourceImage,
+				UUID:                spec.ImageRef,
+				DestinationType:     servers.DestinationVolume,
+				VolumeSize:          g.VolumeSize,
+				VolumeType:          g.VolumeType,
+				BootIndex:           0,
+				DeleteOnTermination: true,
+			},
+		}
+		spec.ImageRef = ""
+	}
+
 	srv, err := g.client.CreateServer(ctx, spec, hintOpts)
 	if err != nil {
 		return "", err
@@ -268,7 +283,6 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (pro
 		return provider.ConnectInfo{}, fmt.Errorf("failed to get server %s: %w", instanceID, err)
 	}
 
-	// g.log.Debug("Server info", "srv", srv)
 	if srv.Status != "ACTIVE" {
 		return provider.ConnectInfo{}, fmt.Errorf("instance status is not active: %s", srv.Status)
 	}
@@ -280,7 +294,6 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (pro
 			return provider.ConnectInfo{}, err
 		}
 
-		// TODO: detect internal (tenant) and external networks
 		for net, addrs := range netAddrs {
 			for _, addr := range addrs {
 				ipAddr = addr.Address
@@ -298,21 +311,6 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (pro
 	info.Protocol = provider.ProtocolSSH
 
 	imgProps := g.imgProps.Load()
-
-	// XXX TODO: srv.Image in many conditions may be empty, so you should go and check volume meta.
-	//           but for simplicity we just keep the last image and assume the props we want keeps the same...
-	// if imgProps == nil && srv.Image != nil {
-	// 	image := new(images.Image)
-	// 	err = mapstructure.Decode(srv.Image, image)
-	// 	if err != nil {
-	// 		return provider.ConnectInfo{}, err
-	// 	}
-	//
-	// 	imgProps, err = g.client.GetImageProperties(ctx, image.ID)
-	// 	if err != nil {
-	// 		return provider.ConnectInfo{}, err
-	// 	}
-	// }
 
 	if imgProps != nil {
 		switch imgProps.OSType {
@@ -342,7 +340,6 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (pro
 		}
 
 	} else {
-		// default to linux on amd64
 		info.OS = "linux"
 		info.Arch = "amd64"
 	}

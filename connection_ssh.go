@@ -20,7 +20,6 @@ type PrivPub interface {
 	Public() crypto.PublicKey
 }
 
-// initSSHKey prepare dynamic ssh key for flatcar instances
 func (g *InstanceGroup) initSSHKey(_ context.Context, log hclog.Logger, settings *provider.Settings) error {
 	var key PrivPub
 	var err error

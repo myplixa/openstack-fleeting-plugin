@@ -14,26 +14,21 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 )
 
-// ExtCreateOpts extended version of servers.CreateOpts
 // nolint:revive
 type ExtCreateOpts struct {
 	servers.CreateOpts
 
-	// fields absent in gophercloud
 	Description string `json:"description,omitempty"`
 	KeyName     string `json:"key_name,omitempty"`
 
-	// search for imageRef by name each time
 	ImageName string `json:"image_name,omitempty"`
 
-	// annotation overrides
 	Networks       []servers.Network          `json:"networks,omitempty"`
 	SecurityGroups []string                   `json:"security_groups,omitempty"`
 	UserData       string                     `json:"user_data,omitempty"`
 	SchedulerHints *servers.SchedulerHintOpts `json:"scheduler_hints,omitempty"`
 }
 
-// ToServerCreateMap for extended opts
 func (opts ExtCreateOpts) ToServerCreateMap() (map[string]interface{}, error) {
 	if opts.Networks != nil {
 		opts.CreateOpts.Networks = opts.Networks
@@ -123,9 +118,6 @@ func IsCloudInitFinished(log string) bool {
 func IsIgnitionFinished(log string) bool {
 	lines := strings.Split(log, "\n")
 
-	// Flatcar do not have any meaningful line,
-	// so instead we first check that there ssh host key message
-	// followed with login prompt
 	searchKeys := true
 
 	for _, line := range lines {

@@ -1,177 +1,144 @@
-fleeting-plugin-openstack
-=========================
+openstack-fleeting-plugin
+==========================
 
-GitLab fleeting plugin for OpenStack.
+GitLab [Fleeting](https://gitlab.com/gitlab-org/fleeting/fleeting) plugin for OpenStack, used with the `instance` or `docker-autoscaler` executor.
 
-https://docs.gitlab.com/runner/executors/docker_autoscaler.html
+> [!note]
+> This repository is a detached fork of [sardinasystems/fleeting-plugin-openstack](https://github.com/sardinasystems/fleeting-plugin-openstack). It has its own history and its own releases going forward, with no live sync back to upstream.
+
+Documentation: https://docs.gitlab.com/runner/executors/docker_autoscaler.html
 
 
-Plugin Configuration
---------------------
+## Provider Configuration
 
-The following parameters are supported:
+The following parameters go under `[runners.autoscaler.plugin_config]`:
 
-| Parameter             | Type   | Description |
-|-----------------------|--------|-------------|
-| `cloud`               | string | Name of the cloud config from clouds.yaml to use |
-| `clouds_config`       | string | Optional. Path to clouds.yaml |
-| `auth_from_env`       | bool   | Optional. Use environment variables for authentication |
-| `name`                | string | Name of the Auto Scaling Group (unique string that used to find instances) |
-| `nova_microversion`   | string | Optional. Microversion for the Openstack Nova client. Default 2.79 (which should be ok for Train+) |
-| `boot_time`           | string | Optional. Maximum wait time for instance to boot up. During that time plugin check Cloud-Init signatures. |
-| `use_ignition`        | string | Enable Fedora CoreOS / Flatcar Linux Ignition support |
-| `server_spec`         | object | Server spec used to create instances. See: [Compute API](https://docs.openstack.org/api-ref/compute/#create-server) |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Identifier for the instance group, used to find and recognize this group's own instances among everything else in the project |
+| `server_spec` | object | Yes | Server spec used to create instances — see [Server Spec](#server-spec) below. Mirrors the [Compute API's create-server body](https://docs.openstack.org/api-ref/compute/#create-server) |
+| `cloud` | string | No | Name of the cloud entry to use from `clouds.yaml`. If unset, falls back to `OS_*` environment variables (see [Authentication](#authentication)) |
+| `clouds_config` | string | No | Path to `clouds.yaml`. Only relevant if `cloud` is set |
+| `nova_microversion` | string | No | Nova Compute API microversion. Default `2.79` |
+| `boot_time` | string | No | Maximum time to wait for cloud-init/Ignition to finish before treating the instance as running anyway (Go duration string, e.g. `"5m"`) |
+| `use_ignition` | bool | No | Use Ignition (Fedora CoreOS / Flatcar) instead of cloud-init for SSH key injection |
+| `volume_type` | string | No | Boots the instance from a Cinder volume of this type, created from `server_spec.imageRef`/`image_name`, instead of the flavor's own local disk. Must be set together with `volume_size` — see [Resource Sizing](#resource-sizing) |
+| `volume_size` | int | No | Size of the boot volume in GB. Must be set together with `volume_type` |
 
+### Server Spec
+
+`server_spec` fields, in addition to the standard [Compute API create-server fields](https://docs.openstack.org/api-ref/compute/#create-server):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Server name template. `%d` is replaced with a per-instance counter, e.g. `"ci-runner-%d"` |
+| `imageRef` | string | Image ID to boot from |
+| `image_name` | string | Resolve `imageRef` by name instead — looked up on every instance creation, so an image re-tagged under the same name takes effect on the next clone without a config change |
+| `flavorRef` | string | Flavor ID — **must be an ID, not a name** (unlike the `openstack` CLI, the Compute API this plugin calls does not resolve flavor names) |
+| `key_name` | string | Nova keypair name for SSH access — required for cloud-init images, optional for Ignition (see [Authentication](#authentication)) |
+| `networks` | array | `[{ uuid = "..." }]` |
+| `security_groups` | array of string | Security group names |
+| `tags` | array of string | Server tags, single-word or free-form text (Nova does not parse structure out of a tag — `"key: value"` strings are commonly used as a convention, not a distinct mechanism) |
+| `scheduler_hints` | object | e.g. `{ group = "..." }` for a (anti-)affinity server group |
+| `user_data` | string | Raw `#cloud-config` or Ignition JSON. With `use_ignition = true`, the plugin parses this and injects a `passwd.users` entry for the dynamically generated SSH key rather than replacing the whole document |
+
+### Authentication
+
+Two ways to authenticate, resolved by the underlying OpenStack client library — there is no separate `auth_from_env` toggle:
+
+- Set `cloud` (and optionally `clouds_config`) to use a named entry from `clouds.yaml`.
+- Leave `cloud` unset to fall back to `OS_*` environment variables on the process running `gitlab-runner`.
+
+Application credentials (`OS_AUTH_TYPE=v3applicationcredential`) must **not** also set `OS_PROJECT_NAME`/`OS_PROJECT_DOMAIN_NAME`/`OS_USER_DOMAIN_NAME` — an application credential is already scoped to a project, and Keystone rejects a scoped auth request layered on top of one.
 
 ### Default connector config
 
-| Parameter                | Default  |
-|--------------------------|----------|
-| `os`                     | `linux`  |
-| `protocol`               | `ssh`    |
-| `username`               | `unset`  |
-| `use_static_credentials` | `false`  |
+| Parameter | Default |
+|-----------|---------|
+| `os` | `linux` |
+| `protocol` | `ssh` |
+| `username` | unset |
+| `use_static_credentials` | `false` |
+
+For cloud-init images, `use_static_credentials = true` is required, together with `username` and `key_path` (a private key matching `server_spec.key_name`) — the plugin does not generate or rotate credentials itself outside Ignition mode. For Ignition images, the plugin can instead generate a per-boot SSH keypair and inject it dynamically.
 
 
-OpenStack setup
----------------
+## Resource Sizing
 
-1. You should create a special user (recommended) and project (optional),
-   then export clouds.yaml with credentials for that cloud.
+By default the instance boots from the flavor's own local disk, at whatever size the flavor defines. `volume_type`/`volume_size` boot from a Cinder volume instead, letting several `[[runners]]` tiers share one flavor/image while requesting different disk sizes — the same purpose `num_cpus`/`memory_mb`/`disk_size_gb` serve on the vSphere fleeting plugin, achieved here through OpenStack's own [block-device-mapping mechanism](https://docs.openstack.org/nova/latest/user/block-device-mapping.html) (`block_device_mapping_v2`, `source_type: image` → `destination_type: volume`) rather than a clone-time hardware override, since CPU/RAM sizing on OpenStack is already handled natively by picking different flavors per tier.
 
-  1. Optional: You can also use OS\_\* environment variables to authenticate.
+```toml
+[runners.autoscaler.plugin_config]
+  volume_type = "ssd"
+  volume_size = 100
+```
 
-2. You may create a tenant network for workers, in that case don't forget to add a router.
-   In that case manager VM should have two ports: external and that tenant network,
-   so it will be able to connect to the worker instances.
-
-3. You should upload a special image with container runtime installed in it.
-   For example we use [Flatcar Linux](https://stable.release.flatcar-linux.net/amd64-usr/current/)
-
-4. *(Optional)* You should generate SSH keypair which will be used by manager instance to connect to workers.
-   Public key must be added to Nova from the user.
-
-   Note: that key required only for Cloud-Init based images. For a Flatcar plugin can generate dynamic ssh key and pass it via Ignition script.
-
-Preparation of the resources could be done by Heat using [heat/stack.yaml](heat/stack.yaml).
-But consider it as an example.
+> [!note]
+> Some flavor catalogs forbid booting from local disk entirely (a `CUSTOM_LOCAL_DISK: forbidden` trait, not visible via `openstack flavor show` for non-admin users — only in the flavor object embedded in a server's own create/show response) — `volume_type`/`volume_size` are required, not optional, on those. Boot-from-volume can also be flakier than a local-disk boot depending on the backend (observed: real, intermittent host-level failures unrelated to this plugin, on the order of 1 in 3 attempts on one deployment). This isn't something the plugin can paper over — it's exactly the kind of transient failure GitLab Runner's own autoscaler is already designed to retry past, so a failed clone should simply be allowed to fail and get retried, not masked with client-side retry logic in the plugin itself.
 
 
-Example runner config
----------------------
+## OpenStack Setup
+
+1. Create a dedicated user (recommended) and project, then either export `clouds.yaml` or set `OS_*` environment variables for it.
+2. Optionally create a tenant network for workers (remember a router if it needs external access) — the manager VM then needs a port on both its own network and the workers' tenant network to reach them.
+3. Upload an image with a container runtime installed. Any cloud-init-capable Linux image works; Fedora CoreOS/Flatcar are supported via Ignition.
+4. For cloud-init images, generate an SSH keypair and register the public key with Nova (`openstack keypair create`) — required, since cloud-init mode has no dynamic-key path (see [Authentication](#authentication)). Not required for Ignition, which the plugin can key dynamically per boot.
+
+Example resource provisioning via Heat: [heat/stack.yaml](heat/stack.yaml) — a starting point, not a turnkey template.
+
+
+## Example Runner Config
+
+Anonymized example — a `docker-autoscaler` tier booting from a 100GB volume, cloud-init image, static SSH credentials:
+
 ```toml
 concurrent = 16
 check_interval = 0
 shutdown_timeout = 0
-log_level = "info"
-
-[session_server]
-session_timeout = 1800
-listen_address = ":8093"
-advertise_address = "mgr.scalingrunner.cloud:8093"
 
 [[runners]]
-name = "manager"
-url = "https://gitlab.com"
-token = "token"
-executor = "docker-autoscaler"
-output_limit = 10240
-shell = "bash"
-environment = [
-  "FF_NETWORK_PER_BUILD=1",
-  "FF_USE_FASTZIP=1",
-  "ARTIFACT_COMPRESSION_LEVEL=default",
-  "CACHE_COMPRESSION_LEVEL=fastest",
-  "FASTZIP_ARCHIVER_BUFFER_SIZE=67108864"
-  ]
+  name = "ci-runner"
+  url = "https://gitlab.example.com"
+  token = "glrt-xxxxxxxxxxxxxxxxxxxx"
+  executor = "docker-autoscaler"
+  limit = 16
 
-[runners.cache]
-Type = "s3"
-Shared = true
+  [runners.docker]
+    image = "docker.example.com/python:3.11"
+    privileged = false
+    volumes = ["/var/run/docker.sock:/var/run/docker.sock", "/cache"]
 
-[runners.cache.s3]
-ServerAddress = "s3.foo.bar"
-AccessKey = "access"
-SecretKey = "secret"
-BucketName = "cache"
+  [runners.autoscaler]
+    plugin = "fleeting-plugin-openstack"
+    capacity_per_instance = 2
+    max_use_count = 10
+    max_instances = 16
 
-[runners.docker]
-disable_entrypoint_overwrite = false
-oom_kill_disable = false
-disable_cache = true
-shm_size = 0
-network_mtu = 0
-# host = "unix:///run/user/1000/podman/podman.sock"
-# tls_verify = false
-# image = "quay.io/podman/stable"
-image = "almalinux:9"
-privileged = true
-pull_policy = ["always", "always"]
+    [runners.autoscaler.connector_config]
+      username = "debian"
+      use_static_credentials = true
+      key_path = "/etc/gitlab-runner/id_ed25519"
+      use_external_addr = false
 
-[runners.autoscaler]
-capacity_per_instance = 1
-max_use_count = 10
-max_instances = 16
-# NOTE: If you manually download plugin and place it into your PATH:
-# plugin = "fleeting-plugin-openstack"
-# Or just run `gitlab-runner fleeting install` and it'll download OCI image automatically.
-plugin = "ghcr.io/sardinasystems/fleeting-plugin-openstack:latest"
+    [[runners.autoscaler.policy]]
+      idle_count = 1
+      idle_time = "5m0s"
 
-[runners.autoscaler.plugin_config]
-cloud = "runner"
-clouds_config = "/etc/gitlab-runner/clouds.yaml"
-name = "scaling-runner-stack-id"
-nova_microversion = "2.79" # train+
-boot_time = "10m"
-use_ignition = true  # enable injection of dynamic SSH key into Ignition config
+    [runners.autoscaler.plugin_config]
+      name = "ci-runner"
+      nova_microversion = "2.79"
+      boot_time = "5m"
+      volume_type = "ssd"
+      volume_size = 100
 
-[runners.autoscaler.plugin_config.server_spec]
-name = "scaling-runner-%d"                                               # %d replaced with instance index
-description = "GitLab CI Docker runners with autoscaling"
-tags = ["GitLab", "CI", "Docker", "Scaling"]
-imageRef = "d5460af5-83f3-47d7-9c4f-80294c66b267"                       # Flatcar Linux (ID)
-image_name = "flatcar"                                                  # Resolve imageRef. If set, each time a new VM should be created, the imageRef will be resolved.
-flavorRef = "4e9d4fa4-a703-4850-8bc1-58b5e139ab57"                      # xlarge flavor
-# key_name = "ci-admin"                                                 # SSH public key for worker nodes
-networks = [ { uuid = "f05e7f64-9e0f-4c5c-acb0-b636000d7301" } ]        # tenant network
-security_groups = [ "cee22d91-bb9a-455d-be88-e911d3cb066a" ]            # allow SSH ingress from tenant network
-scheduler_hints = { group = "a9c941cb-5b34-46e0-8fc6-7471e3b77c75" }    # [Soft-]Anti-Affinity group
-# May be used to pass #cloud-config or ignition scripts.
-# If use_ignition == true, plugin will try parse existing script to inject passwd.users entry.
-# Example: disable OS auto-updates
-user_data = '''
-{
-  "ignition": {
-    "version": "3.4.0"
-  },
-  "storage": {
-    "files": [
-      {
-        "overwrite": true,
-        "path": "/etc/flatcar/update.conf",
-        "contents": {
-          "compression": "",
-          "source": "data:,SERVER%3Ddisabled%0AREBOOT_STRATEGY%3Doff%0A"
-        },
-        "mode": 272
-      }
-    ]
-  }
-}
-'''
-
-[runners.autoscaler.connector_config]
-# username = "fedora"                    # Can be extracted from Image metadata os_admin_user
-# password = ""                          # not used
-# key_path = "/etc/gitlab-runner/id_rsa" # private key passed to server_spec.key_name. Required in cloud-init mode, optional for Ignition.
-# use_static_credentials = true          # Tells to use key provided above.
-keepalive = "30s"
-timeout = "0m"
-use_external_addr = false
-
-[[runners.autoscaler.policy]]
-idle_count = 2
-idle_time = "30m0s"
-scale_factor = 0.0
-scale_factor_limit = 0
+      [runners.autoscaler.plugin_config.server_spec]
+        name = "ci-runner-%d"
+        imageRef = "00000000-0000-0000-0000-000000000000"
+        flavorRef = "00000000-0000-0000-0000-000000000001"
+        key_name = "ci-runners"
+        networks = [ { uuid = "00000000-0000-0000-0000-000000000002" } ]
+        security_groups = [ "ci-runners" ]
+        tags = ["managed_by: fleeting-plugin"]
 ```
+
+`OS_*` authentication environment variables (see [Authentication](#authentication)) are set in the environment `gitlab-runner` runs under, not in `config.toml`.

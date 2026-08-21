@@ -53,24 +53,12 @@ type EnvCloudConfig struct {
 	ApplicationCredentialSecret string `json:"application-credential-secret" env:"OS_APPLICATION_CREDENTIAL_SECRET"`
 }
 
-// Some good known properties useful for setting up ConnectInfo
-//
-// See also: https://docs.openstack.org/glance/latest/admin/useful-image-properties.html
 type ImageProperties struct {
-	// Architecture that must be supported by the hypervisor.
 	Architecture string `json:"architecture,omitempty" mapstructure:"architecture,omitempty"`
-
-	// OSType is the operating system installed on the image.
-	OSType string `json:"os_type,omitempty" mapstructure:"os_type,omitempty"`
-
-	// OSDistro is the common name of the operating system distribution in lowercase
-	OSDistro string `json:"os_distro,omitempty" mapstructure:"os_distro,omitempty"`
-
-	// OSVersion is the operating system version as specified by the distributor.
-	OSVersion string `json:"os_version,omitempty" mapstructure:"os_version,omitempty"`
-
-	// OSAdminUser is the default admin user name for the operating system
-	OSAdminUser string `json:"os_admin_user,omitempty" mapstructure:"os_admin_user,omitempty"`
+	OSType       string `json:"os_type,omitempty" mapstructure:"os_type,omitempty"`
+	OSDistro     string `json:"os_distro,omitempty" mapstructure:"os_distro,omitempty"`
+	OSVersion    string `json:"os_version,omitempty" mapstructure:"os_version,omitempty"`
+	OSAdminUser  string `json:"os_admin_user,omitempty" mapstructure:"os_admin_user,omitempty"`
 }
 
 type Client interface {
