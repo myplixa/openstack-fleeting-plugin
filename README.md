@@ -35,12 +35,12 @@ The following parameters go under `[runners.autoscaler.plugin_config]`:
 | `imageRef` | string | Image ID to boot from |
 | `image_name` | string | Resolve `imageRef` by name instead — looked up on every instance creation, so an image re-tagged under the same name takes effect on the next clone without a config change |
 | `flavorRef` | string | Flavor ID — **must be an ID, not a name** (unlike the `openstack` CLI, the Compute API this plugin calls does not resolve flavor names) |
-| `key_name` | string | Nova keypair name for SSH access — required for cloud-init images, optional for Ignition (see [Authentication](#authentication)) |
+| `key_name` | string | Optional. Nova keypair name — only relevant if you want a fixed, pre-registered key instead of the plugin's own dynamic one (see [Authentication](#authentication)) |
 | `networks` | array | `[{ uuid = "..." }]` |
 | `security_groups` | array of string | Security group names |
 | `tags` | array of string | Server tags, single-word or free-form text (Nova does not parse structure out of a tag — `"key: value"` strings are commonly used as a convention, not a distinct mechanism) |
 | `scheduler_hints` | object | e.g. `{ group = "..." }` for a (anti-)affinity server group |
-| `user_data` | string | Raw `#cloud-config` or Ignition JSON. With `use_ignition = true`, the plugin parses this and injects a `passwd.users` entry for the dynamically generated SSH key rather than replacing the whole document |
+| `user_data` | string | Raw `#cloud-config` or Ignition JSON, merged with rather than replaced by the plugin's own SSH key injection — see [Authentication](#authentication) |
 
 ### Authentication
 
@@ -60,7 +60,10 @@ Application credentials (`OS_AUTH_TYPE=v3applicationcredential`) must **not** al
 | `username` | unset |
 | `use_static_credentials` | `false` |
 
-For cloud-init images, `use_static_credentials = true` is required, together with `username` and `key_path` (a private key matching `server_spec.key_name`) — the plugin does not generate or rotate credentials itself outside Ignition mode. For Ignition images, the plugin can instead generate a per-boot SSH keypair and inject it dynamically.
+Two ways to get SSH access into the instance, for both cloud-init and Ignition images alike:
+
+- **Dynamic (default, `use_static_credentials = false`)**: the plugin generates its own SSH keypair once at startup — reusing the private key from `connector_config.key`/`key_path` if one is already configured there, or generating a fresh one otherwise — and injects the public half into the instance at boot: as a `passwd.users` entry for Ignition, merged into `server_spec.user_data`'s `users:` list for cloud-init (existing `user_data` content is preserved, not overwritten). No Nova `key_name` is required for this path. `connector_config.username` selects which user gets the key; if unset, the plugin falls back to the image's `os_admin_user` property.
+- **Static (`use_static_credentials = true`)**: the plugin does nothing — you're responsible for `server_spec.key_name` pointing at an already-registered Nova keypair, and `connector_config.username`/`key_path` matching it on the connector side.
 
 
 ## Resource Sizing
@@ -82,14 +85,14 @@ By default the instance boots from the flavor's own local disk, at whatever size
 1. Create a dedicated user (recommended) and project, then either export `clouds.yaml` or set `OS_*` environment variables for it.
 2. Optionally create a tenant network for workers (remember a router if it needs external access) — the manager VM then needs a port on both its own network and the workers' tenant network to reach them.
 3. Upload an image with a container runtime installed. Any cloud-init-capable Linux image works; Fedora CoreOS/Flatcar are supported via Ignition.
-4. For cloud-init images, generate an SSH keypair and register the public key with Nova (`openstack keypair create`) — required, since cloud-init mode has no dynamic-key path (see [Authentication](#authentication)). Not required for Ignition, which the plugin can key dynamically per boot.
+4. *(Optional)* A Nova keypair is only needed if you want `use_static_credentials = true` — the default dynamic mode needs nothing pre-registered (see [Authentication](#authentication)).
 
 Example resource provisioning via Heat: [heat/stack.yaml](heat/stack.yaml) — a starting point, not a turnkey template.
 
 
 ## Example Runner Config
 
-Anonymized example — a `docker-autoscaler` tier booting from a 100GB volume, cloud-init image, static SSH credentials:
+Anonymized example — a `docker-autoscaler` tier booting from a 100GB volume, cloud-init image, dynamic SSH credentials (no Nova keypair needed):
 
 ```toml
 concurrent = 16
@@ -116,8 +119,6 @@ shutdown_timeout = 0
 
     [runners.autoscaler.connector_config]
       username = "debian"
-      use_static_credentials = true
-      key_path = "/etc/gitlab-runner/id_ed25519"
       use_external_addr = false
 
     [[runners.autoscaler.policy]]
@@ -135,7 +136,6 @@ shutdown_timeout = 0
         name = "ci-runner-%d"
         imageRef = "00000000-0000-0000-0000-000000000000"
         flavorRef = "00000000-0000-0000-0000-000000000001"
-        key_name = "ci-runners"
         networks = [ { uuid = "00000000-0000-0000-0000-000000000002" } ]
         security_groups = [ "ci-runners" ]
         tags = ["managed_by: fleeting-plugin"]

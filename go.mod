@@ -17,6 +17,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	gitlab.com/gitlab-org/fleeting/fleeting v0.0.0-20250425145049-7f673e7c5598
 	golang.org/x/crypto v0.39.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -44,5 +45,4 @@ require (
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

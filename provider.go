@@ -72,11 +72,7 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 		g.imgProps.Store(imgProps)
 	}
 
-	if !g.UseIgnition && !settings.UseStaticCredentials {
-		return provider.ProviderInfo{}, fmt.Errorf("only static credentials supported in Cloud-Init mode")
-	}
-
-	if g.UseIgnition {
+	if !settings.UseStaticCredentials {
 		err = g.initSSHKey(ctx, log, &settings)
 		if err != nil {
 			return provider.ProviderInfo{}, err
@@ -231,8 +227,13 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 		hintOpts = spec.SchedulerHints
 	}
 
-	if g.UseIgnition {
-		err := InsertSSHKeyIgn(spec, g.settings.Username, g.sshPubKey)
+	if !g.settings.UseStaticCredentials {
+		var err error
+		if g.UseIgnition {
+			err = InsertSSHKeyIgn(spec, g.settings.Username, g.sshPubKey)
+		} else {
+			err = InsertSSHKeyCloudInit(spec, g.settings.Username, g.sshPubKey)
+		}
 		if err != nil {
 			return "", err
 		}
