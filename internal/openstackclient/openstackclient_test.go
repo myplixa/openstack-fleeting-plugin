@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/testhelper"
 	thclient "github.com/gophercloud/gophercloud/v2/testhelper/client"
@@ -63,6 +64,40 @@ func TestGetImageByName(t *testing.T) {
 	}
 
 	t.Log(props)
+}
+
+func TestRestoreComputeApiVersion(t *testing.T) {
+	t.Run("preserves config value when env unset", func(t *testing.T) {
+		t.Setenv("OS_COMPUTE_API_VERSION", "")
+		os.Unsetenv("OS_COMPUTE_API_VERSION")
+
+		ecc := &EnvCloudConfig{CloudConfig: CloudConfig{ComputeApiVersion: "2.79"}}
+		env.Parse(ecc) // simulates New()'s env.Parse clobbering ComputeApiVersion back to its envDefault
+		restoreComputeApiVersion(ecc, "2.79")
+
+		assert.Equal(t, "2.79", ecc.ComputeApiVersion)
+	})
+
+	t.Run("env var wins when explicitly set", func(t *testing.T) {
+		t.Setenv("OS_COMPUTE_API_VERSION", "2.90")
+
+		ecc := &EnvCloudConfig{CloudConfig: CloudConfig{ComputeApiVersion: "2.79"}}
+		env.Parse(ecc)
+		restoreComputeApiVersion(ecc, "2.79")
+
+		assert.Equal(t, "2.90", ecc.ComputeApiVersion)
+	})
+
+	t.Run("falls back to envDefault when nothing set", func(t *testing.T) {
+		t.Setenv("OS_COMPUTE_API_VERSION", "")
+		os.Unsetenv("OS_COMPUTE_API_VERSION")
+
+		ecc := &EnvCloudConfig{}
+		env.Parse(ecc)
+		restoreComputeApiVersion(ecc, "")
+
+		assert.Equal(t, "2.79", ecc.ComputeApiVersion)
+	})
 }
 
 func TestGetImageByName_Many(t *testing.T) {

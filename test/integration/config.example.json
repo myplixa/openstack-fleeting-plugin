@@ -1,0 +1,20 @@
+{
+  "plugin_config": {
+    "name": "fleeting-realtest",
+    "volume_type": "ssd",
+    "volume_size": 100,
+    "server_spec": {
+      "name": "fleeting-realtest-%d",
+      "imageRef": "00000000-0000-0000-0000-000000000000",
+      "flavorRef": "00000000-0000-0000-0000-000000000001",
+      "availability_zone": "az1",
+      "networks": [
+        { "uuid": "00000000-0000-0000-0000-000000000002" }
+      ],
+      "security_groups": ["ci-runners"]
+    }
+  },
+  "connector_config": {
+    "username": "debian"
+  }
+}

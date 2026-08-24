@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/go-viper/mapstructure/v2"
@@ -87,9 +88,18 @@ func New(ctx context.Context, authConfig AuthConfig, cloudOpts *CloudOpts) (Clie
 		return nil, fmt.Errorf("failed to parse cloudOpts: %w", err)
 	}
 
+	var preservedComputeApiVersion string
+	if ecc, ok := authConfig.(*EnvCloudConfig); ok {
+		preservedComputeApiVersion = ecc.ComputeApiVersion
+	}
+
 	err = env.Parse(authConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse authConfig: %w", err)
+	}
+
+	if ecc, ok := authConfig.(*EnvCloudConfig); ok {
+		restoreComputeApiVersion(ecc, preservedComputeApiVersion)
 	}
 
 	providerClient, endpointOps, err := NewProviderClient(ctx, authConfig, cloudOpts)
@@ -111,6 +121,12 @@ func New(ctx context.Context, authConfig AuthConfig, cloudOpts *CloudOpts) (Clie
 		compute: computeClient,
 		image:   imageClient,
 	}, nil
+}
+
+func restoreComputeApiVersion(ecc *EnvCloudConfig, preserved string) {
+	if _, envSet := os.LookupEnv("OS_COMPUTE_API_VERSION"); !envSet && preserved != "" {
+		ecc.ComputeApiVersion = preserved
+	}
 }
 
 func (cloudConfig *CloudConfig) HTTPOpts() (debug bool, computeApiVersion string) {

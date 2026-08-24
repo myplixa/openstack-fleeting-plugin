@@ -18,6 +18,8 @@ import (
 
 const MetadataKey = "fleeting-cluster"
 
+const defaultBootTime = 2 * time.Minute
+
 var _ provider.InstanceGroup = (*InstanceGroup)(nil)
 
 type InstanceGroup struct {
@@ -84,6 +86,8 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 		if err != nil {
 			return provider.ProviderInfo{}, fmt.Errorf("failed to parse boot_time: %w", err)
 		}
+	} else {
+		g.BootTime = defaultBootTime
 	}
 
 	g.settings = settings
@@ -213,6 +217,9 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	spec.Min = 0
+	spec.Max = 0
 
 	index := int(g.instanceCounter.Add(1))
 

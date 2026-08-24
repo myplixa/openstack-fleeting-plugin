@@ -11,19 +11,17 @@ Documentation: https://docs.gitlab.com/runner/executors/docker_autoscaler.html
 
 ## Provider Configuration
 
-The following parameters go under `[runners.autoscaler.plugin_config]`:
+The following parameters go under `[runners.autoscaler.plugin_config]`. This is the common case — everything a typical deployment needs:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Identifier for the instance group, used to find and recognize this group's own instances among everything else in the project |
 | `server_spec` | object | Yes | Server spec used to create instances — see [Server Spec](#server-spec) below. Mirrors the [Compute API's create-server body](https://docs.openstack.org/api-ref/compute/#create-server) |
 | `cloud` | string | No | Name of the cloud entry to use from `clouds.yaml`. If unset, falls back to `OS_*` environment variables (see [Authentication](#authentication)) |
-| `clouds_config` | string | No | Path to `clouds.yaml`. Only relevant if `cloud` is set |
-| `nova_microversion` | string | No | Nova Compute API microversion. Default `2.79` |
-| `boot_time` | string | No | Maximum time to wait for cloud-init/Ignition to finish before treating the instance as running anyway (Go duration string, e.g. `"5m"`) |
-| `use_ignition` | bool | No | Use Ignition (Fedora CoreOS / Flatcar) instead of cloud-init for SSH key injection |
-| `volume_type` | string | No | Boots the instance from a Cinder volume of this type, created from `server_spec.imageRef`/`image_name`, instead of the flavor's own local disk. Must be set together with `volume_size` — see [Resource Sizing](#resource-sizing) |
-| `volume_size` | int | No | Size of the boot volume in GB. Must be set together with `volume_type` |
+| `volume_type` | string | Sometimes | Boots the instance from a Cinder volume of this type, created from `server_spec.imageRef`/`image_name`, instead of the flavor's own local disk. Must be set together with `volume_size` — see [Resource Sizing](#resource-sizing). Some flavor catalogs require this |
+| `volume_size` | int | Sometimes | Size of the boot volume in GB. Must be set together with `volume_type` |
+
+See [Advanced Configuration](#advanced-configuration) for everything else — `clouds_config`, `nova_microversion`, `boot_time`, `use_ignition` all have working defaults and only need to be touched for specific edge cases.
 
 ### Server Spec
 
@@ -33,14 +31,14 @@ The following parameters go under `[runners.autoscaler.plugin_config]`:
 |-----------|------|-------------|
 | `name` | string | Server name template. `%d` is replaced with a per-instance counter, e.g. `"ci-runner-%d"` |
 | `imageRef` | string | Image ID to boot from |
-| `image_name` | string | Resolve `imageRef` by name instead — looked up on every instance creation, so an image re-tagged under the same name takes effect on the next clone without a config change |
 | `flavorRef` | string | Flavor ID — **must be an ID, not a name** (unlike the `openstack` CLI, the Compute API this plugin calls does not resolve flavor names) |
-| `key_name` | string | Optional. Nova keypair name — only relevant if you want a fixed, pre-registered key instead of the plugin's own dynamic one (see [Authentication](#authentication)) |
 | `networks` | array | `[{ uuid = "..." }]` |
 | `security_groups` | array of string | Security group names |
-| `tags` | array of string | Server tags, single-word or free-form text (Nova does not parse structure out of a tag — `"key: value"` strings are commonly used as a convention, not a distinct mechanism) |
-| `scheduler_hints` | object | e.g. `{ group = "..." }` for a (anti-)affinity server group |
-| `user_data` | string | Raw `#cloud-config` or Ignition JSON, merged with rather than replaced by the plugin's own SSH key injection — see [Authentication](#authentication) |
+
+See [Advanced Configuration](#advanced-configuration) for `image_name`, `key_name`, `tags`, `scheduler_hints`, `user_data`, and everything else the Compute API accepts here.
+
+> [!warning]
+> `min_count`/`max_count` (standard Compute API fields, settable here since `server_spec` embeds the full create-server body) are forced to `0` before every request and cannot be used. The plugin already creates one server per call in its own scaling loop, incrementing the `%d` counter each time — letting Nova create more than one server per call would produce name collisions and silently double instance counts.
 
 ### Authentication
 
@@ -77,7 +75,32 @@ By default the instance boots from the flavor's own local disk, at whatever size
 ```
 
 > [!note]
-> Some flavor catalogs forbid booting from local disk entirely (a `CUSTOM_LOCAL_DISK: forbidden` trait, not visible via `openstack flavor show` for non-admin users — only in the flavor object embedded in a server's own create/show response) — `volume_type`/`volume_size` are required, not optional, on those. Boot-from-volume can also be flakier than a local-disk boot depending on the backend (observed: real, intermittent host-level failures unrelated to this plugin, on the order of 1 in 3 attempts on one deployment). This isn't something the plugin can paper over — it's exactly the kind of transient failure GitLab Runner's own autoscaler is already designed to retry past, so a failed clone should simply be allowed to fail and get retried, not masked with client-side retry logic in the plugin itself.
+> Some flavor catalogs forbid booting from local disk entirely (a `CUSTOM_LOCAL_DISK: forbidden` trait, not visible via `openstack flavor show` for non-admin users — only in the flavor object embedded in a server's own create/show response) — `volume_type`/`volume_size` are required, not optional, on those. Boot-from-volume can also be flakier than a local-disk boot depending on the backend (observed: real, intermittent host-level failures unrelated to this plugin). This isn't something the plugin can paper over — it's exactly the kind of transient failure GitLab Runner's own autoscaler is already designed to retry past, so a failed clone should simply be allowed to fail and get retried, not masked with client-side retry logic in the plugin itself.
+
+
+## Advanced Configuration
+
+Everything below has a working default and exists for edge cases — most deployments never set any of it.
+
+`[runners.autoscaler.plugin_config]`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `clouds_config` | string | unset | Path to `clouds.yaml`. Only relevant if `cloud` is also set and the file isn't in one of `clouds.Parse`'s default search locations |
+| `nova_microversion` | string | `2.79` | Nova Compute API microversion. An explicit `OS_COMPUTE_API_VERSION` environment variable takes priority over this field if both are set |
+| `boot_time` | string | `2m` | How long to wait for cloud-init/Ignition to finish (checked via console log) before treating the instance as running anyway, Go duration string e.g. `"5m"` |
+| `use_ignition` | bool | `false` | Use Ignition (Fedora CoreOS / Flatcar) instead of cloud-init for SSH key injection |
+
+`server_spec`, on top of the [common fields](#server-spec):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `image_name` | string | Resolve `imageRef` by name instead — looked up on every instance creation, so an image re-tagged under the same name takes effect on the next clone without a config change. Prefer a fixed `imageRef` for reproducible clones |
+| `key_name` | string | Nova keypair name — only relevant under `use_static_credentials = true` (see [Authentication](#authentication)) |
+| `tags` | array of string | Server tags, single-word or free-form text. Purely cosmetic Nova metadata — this plugin does not read tags for anything, it recognizes its own instances by a separate metadata key set internally. `"key: value"` strings are a common formatting convention, not a distinct mechanism Nova parses |
+| `scheduler_hints` | object | e.g. `{ group = "..." }` for a (anti-)affinity server group |
+| `user_data` | string | Raw `#cloud-config` or Ignition JSON, merged with rather than replaced by the plugin's own SSH key injection — see [Authentication](#authentication) |
+| everything else `servers.CreateOpts` accepts | — | `description`, `availability_zone`, `metadata`, `config_drive`, `personality`, `access_ipv4`/`access_ipv6`, `hostname`, `OS-DCF:diskConfig`, `hypervisor_hostname`, etc. — passed straight through to the [Compute API](https://docs.openstack.org/api-ref/compute/#create-server) if set, none of it read by the plugin itself. `adminPass` in particular has no effect on how this plugin connects — access is always SSH-key based |
 
 
 ## OpenStack Setup
@@ -127,8 +150,6 @@ shutdown_timeout = 0
 
     [runners.autoscaler.plugin_config]
       name = "ci-runner"
-      nova_microversion = "2.79"
-      boot_time = "5m"
       volume_type = "ssd"
       volume_size = 100
 
@@ -138,7 +159,28 @@ shutdown_timeout = 0
         flavorRef = "00000000-0000-0000-0000-000000000001"
         networks = [ { uuid = "00000000-0000-0000-0000-000000000002" } ]
         security_groups = [ "ci-runners" ]
-        tags = ["managed_by: fleeting-plugin"]
 ```
 
 `OS_*` authentication environment variables (see [Authentication](#authentication)) are set in the environment `gitlab-runner` runs under, not in `config.toml`.
+
+
+## Development
+
+### Build
+
+```sh
+make build
+```
+
+Cross-compile targets and other build details: see the [Makefile](Makefile).
+
+### Tests
+
+```sh
+make test              # unit tests, no cloud access needed
+make integration-test   # provisions a real instance and tears it down; needs a real OpenStack project
+```
+
+`integration-test` skips cleanly if `test/integration/config.json` doesn't exist — copy `test/integration/config.example.json` and fill in real values to run it.
+
+Note for anyone extending the integration test: a fleeting `Instance.ID()` is the Nova server UUID here (whatever `createInstance` returns to the fleeting core library), not the rendered `server_spec.name` — unlike the vSphere fleeting plugin, where the clone's unique name serves as both. The guest's actual hostname comes from `server_spec.name`, not from `ID()`.

@@ -21,3 +21,6 @@
 go.work
 fleeting-plugin-openstack
 dist/
+
+# real OpenStack credentials for test/integration — never commit
+test/integration/config.json
