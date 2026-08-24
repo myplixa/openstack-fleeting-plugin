@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -141,9 +140,8 @@ loop:
 		require.Contains(t, out, info.Username)
 	})
 
-	t.Run("guest hostname matches the server_spec.name template", func(t *testing.T) {
-		nameTemplatePrefix := strings.SplitN(cfg.PluginConfig.ServerSpec.Name, "%d", 2)[0]
+	t.Run("guest hostname is prefixed with the instance group name", func(t *testing.T) {
 		out := runCommand(t, "hostname")
-		require.Contains(t, out, nameTemplatePrefix)
+		require.Contains(t, out, cfg.PluginConfig.Name)
 	})
 }

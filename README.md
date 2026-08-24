@@ -29,16 +29,27 @@ See [Advanced Configuration](#advanced-configuration) for everything else — `c
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `name` | string | Server name template. `%d` is replaced with a per-instance counter, e.g. `"ci-runner-%d"` |
 | `imageRef` | string | Image ID to boot from |
 | `flavorRef` | string | Flavor ID — **must be an ID, not a name** (unlike the `openstack` CLI, the Compute API this plugin calls does not resolve flavor names) |
 | `networks` | array | `[{ uuid = "..." }]` |
 | `security_groups` | array of string | Security group names |
 
-See [Advanced Configuration](#advanced-configuration) for `image_name`, `key_name`, `tags`, `scheduler_hints`, `user_data`, and everything else the Compute API accepts here.
+`server_spec.name`, if set, is ignored — see [VM Naming](#vm-naming). See [Advanced Configuration](#advanced-configuration) for `image_name`, `key_name`, `tags`, `scheduler_hints`, `user_data`, and everything else the Compute API accepts here.
 
 > [!warning]
-> `min_count`/`max_count` (standard Compute API fields, settable here since `server_spec` embeds the full create-server body) are forced to `0` before every request and cannot be used. The plugin already creates one server per call in its own scaling loop, incrementing the `%d` counter each time — letting Nova create more than one server per call would produce name collisions and silently double instance counts.
+> `min_count`/`max_count` (standard Compute API fields, settable here since `server_spec` embeds the full create-server body) are forced to `0` before every request and cannot be used. The plugin already creates one server per call in its own scaling loop — letting Nova create more than one server per call would produce name collisions and silently double instance counts.
+
+### VM Naming
+
+Instances are named `<name>-<id>`, where `<name>` is the top-level `name` parameter and `<id>` is a random 8-character identifier generated per instance:
+
+```
+ci-runner-a1b2c3d4
+```
+
+Any `server_spec.name` set in config is ignored — the plugin always computes the name itself, the same way the vSphere fleeting plugin does. This is also what becomes the guest's hostname. Since the identifier is random rather than a sequential counter, names stay collision-free across `gitlab-runner` restarts (an in-process counter would restart from 1 and could collide with an existing instance that hasn't been cleaned up yet).
+
+Unlike the vSphere fleeting plugin, this one doesn't need the name for instance recognition — every instance also gets a `fleeting-cluster` metadata key set to `name`, and that's what `getInstances` actually filters on, not the name prefix. The name is purely for human/hostname readability; `name` itself should still stay consistent between runs, since it's what shows up as the guest hostname and in `openstack server list`.
 
 ### Authentication
 
@@ -62,6 +73,24 @@ Two ways to get SSH access into the instance, for both cloud-init and Ignition i
 
 - **Dynamic (default, `use_static_credentials = false`)**: the plugin generates its own SSH keypair once at startup — reusing the private key from `connector_config.key`/`key_path` if one is already configured there, or generating a fresh one otherwise — and injects the public half into the instance at boot: as a `passwd.users` entry for Ignition, merged into `server_spec.user_data`'s `users:` list for cloud-init (existing `user_data` content is preserved, not overwritten). No Nova `key_name` is required for this path. `connector_config.username` selects which user gets the key; if unset, the plugin falls back to the image's `os_admin_user` property.
 - **Static (`use_static_credentials = true`)**: the plugin does nothing — you're responsible for `server_spec.key_name` pointing at an already-registered Nova keypair, and `connector_config.username`/`key_path` matching it on the connector side.
+
+On the cloud-init path, the plugin also sets `package_update`/`package_upgrade`/`package_reboot_if_required` to `false` and a `final_message` — the same defaults the vSphere fleeting plugin applies, for the same reason: the image is expected to already have everything it needs, and updating/rebooting on every clone only slows down provisioning and risks drift between clones of the same image. `final_message: "Cloud-init finished successfully at $TIMESTAMP"` shows up in the guest's own `/var/log/cloud-init-output.log`, useful when troubleshooting a clone that came up unreachable. Any of these already present in a user-supplied `server_spec.user_data` are left as the user set them, not overwritten.
+
+Rendered example (no `user_data` set, `connector_config.username = "debian"`):
+
+```yaml
+#cloud-config
+final_message: Cloud-init finished successfully at $TIMESTAMP
+package_reboot_if_required: false
+package_update: false
+package_upgrade: false
+users:
+    - lock_passwd: false
+      name: debian
+      ssh_authorized_keys:
+        - ssh-ed25519 AAAA... fleeting@ci-runner-a1b2c3d4
+      sudo: ALL=(ALL) NOPASSWD:ALL
+```
 
 
 ## Resource Sizing
@@ -154,7 +183,6 @@ shutdown_timeout = 0
       volume_size = 100
 
       [runners.autoscaler.plugin_config.server_spec]
-        name = "ci-runner-%d"
         imageRef = "00000000-0000-0000-0000-000000000000"
         flavorRef = "00000000-0000-0000-0000-000000000001"
         networks = [ { uuid = "00000000-0000-0000-0000-000000000002" } ]
@@ -183,4 +211,4 @@ make integration-test   # provisions a real instance and tears it down; needs a 
 
 `integration-test` skips cleanly if `test/integration/config.json` doesn't exist — copy `test/integration/config.example.json` and fill in real values to run it.
 
-Note for anyone extending the integration test: a fleeting `Instance.ID()` is the Nova server UUID here (whatever `createInstance` returns to the fleeting core library), not the rendered `server_spec.name` — unlike the vSphere fleeting plugin, where the clone's unique name serves as both. The guest's actual hostname comes from `server_spec.name`, not from `ID()`.
+Note for anyone extending the integration test: a fleeting `Instance.ID()` is the Nova server UUID here (whatever `createInstance` returns to the fleeting core library), not the computed `<name>-<id>` name — unlike the vSphere fleeting plugin, where the clone's unique name serves as both. The guest's actual hostname comes from the computed name (see [VM Naming](#vm-naming)), not from `ID()`.

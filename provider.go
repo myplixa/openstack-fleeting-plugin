@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/hashicorp/go-hclog"
 	"github.com/jinzhu/copier"
@@ -35,12 +36,11 @@ type InstanceGroup struct {
 	VolumeType string `json:"volume_type,omitempty"`
 	VolumeSize int    `json:"volume_size,omitempty"`
 
-	client          openstackclient.Client
-	settings        provider.Settings
-	log             hclog.Logger
-	imgProps        atomic.Pointer[openstackclient.ImageProperties]
-	sshPubKey       string
-	instanceCounter atomic.Int32
+	client    openstackclient.Client
+	settings  provider.Settings
+	log       hclog.Logger
+	imgProps  atomic.Pointer[openstackclient.ImageProperties]
+	sshPubKey string
 }
 
 func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings provider.Settings) (provider.ProviderInfo, error) {
@@ -58,6 +58,10 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 
 	if err != nil {
 		return provider.ProviderInfo{}, err
+	}
+
+	if g.ServerSpec.Name == "" {
+		g.ServerSpec.Name = g.Name
 	}
 
 	_, err = g.ServerSpec.ToServerCreateMap()
@@ -221,9 +225,7 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 	spec.Min = 0
 	spec.Max = 0
 
-	index := int(g.instanceCounter.Add(1))
-
-	spec.Name = fmt.Sprintf(g.ServerSpec.Name, index)
+	spec.Name = fmt.Sprintf("%s-%s", g.Name, uuid.New().String()[:8])
 	if spec.Metadata == nil {
 		spec.Metadata = make(map[string]string)
 	}

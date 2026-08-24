@@ -49,6 +49,17 @@ func InsertSSHKeyCloudInit(spec *ExtCreateOpts, username, pubKey string) error {
 
 	cfg["users"] = usersRaw
 
+	for key, defaultValue := range map[string]any{
+		"package_update":             false,
+		"package_upgrade":            false,
+		"package_reboot_if_required": false,
+		"final_message":              "Cloud-init finished successfully at $TIMESTAMP",
+	} {
+		if _, ok := cfg[key]; !ok {
+			cfg[key] = defaultValue
+		}
+	}
+
 	marshalled, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal cloud-config: %w", err)
