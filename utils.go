@@ -21,9 +21,11 @@ type ExtCreateOpts struct {
 	Description string `json:"description,omitempty"`
 	KeyName     string `json:"key_name,omitempty"`
 
-	ImageName string `json:"image_name,omitempty"`
+	ImageName  string `json:"image_name,omitempty"`
+	FlavorName string `json:"flavor_name,omitempty"`
 
 	Networks       []servers.Network          `json:"networks,omitempty"`
+	NetworkNames   []string                   `json:"network_names,omitempty"`
 	SecurityGroups []string                   `json:"security_groups,omitempty"`
 	UserData       string                     `json:"user_data,omitempty"`
 	SchedulerHints *servers.SchedulerHintOpts `json:"scheduler_hints,omitempty"`

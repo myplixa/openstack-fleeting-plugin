@@ -28,12 +28,24 @@ See [Advanced Configuration](#advanced-configuration) for everything else — `c
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `imageRef` | string | Image ID to boot from |
-| `flavorRef` | string | Flavor ID — **must be an ID, not a name** (unlike the `openstack` CLI, the Compute API this plugin calls does not resolve flavor names) |
-| `networks` | array | `[{ uuid = "..." }]` |
+| `imageRef` / `image_name` | string | Image ID or name to boot from — see [Resolving Names](#resolving-names) |
+| `flavorRef` / `flavor_name` | string | Flavor ID or name — see [Resolving Names](#resolving-names) |
+| `networks` / `network_names` | array | `[{ uuid = "..." }]`, or a plain list of network names — see [Resolving Names](#resolving-names) |
 | `security_groups` | array of string | Security group names |
 
-`server_spec.name`, if set, is ignored — see [VM Naming](#vm-naming). See [Advanced Configuration](#advanced-configuration) for `image_name`, `key_name`, `tags`, `scheduler_hints`, `user_data`, and everything else the Compute API accepts here.
+`server_spec.name`, if set, is ignored — see [VM Naming](#vm-naming). See [Advanced Configuration](#advanced-configuration) for `key_name`, `tags`, `scheduler_hints`, `user_data`, and everything else the Compute API accepts here.
+
+### Resolving Names
+
+The raw Compute API this plugin calls needs UUIDs for `imageRef`/`flavorRef`/`networks`, unlike the `openstack` CLI, which resolves names to UUIDs itself before sending the request. For readability, this plugin does that same resolution for you, on every instance creation (so a renamed/re-tagged resource takes effect on the next clone without touching config):
+
+| Instead of | Use | Looked up via |
+|---|---|---|
+| `imageRef = "00000000-..."` | `image_name = "debian-11-infra-runners-0.1.1"` | Glance, by exact name |
+| `flavorRef = "00000000-..."` | `flavor_name = "r2.4-16"` | Nova, by exact name |
+| `networks = [{ uuid = "00000000-..." }]` | `network_names = ["nad-net-dc3"]` | Neutron, by exact name |
+
+Each lookup fails loudly if the name matches zero or more than one resource — names aren't guaranteed unique in OpenStack, so an ambiguous name is treated as a hard error rather than silently picking one. `network_names` entries are appended to whatever's already in `networks`, so both can be used together if some networks are more conveniently referenced by ID.
 
 > [!warning]
 > `min_count`/`max_count` (standard Compute API fields, settable here since `server_spec` embeds the full create-server body) are forced to `0` before every request and cannot be used. The plugin already creates one server per call in its own scaling loop — letting Nova create more than one server per call would produce name collisions and silently double instance counts.
@@ -123,7 +135,6 @@ Everything below has a working default and exists for edge cases — most deploy
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `image_name` | string | Resolve `imageRef` by name instead — looked up on every instance creation, so an image re-tagged under the same name takes effect on the next clone without a config change. Prefer a fixed `imageRef` for reproducible clones |
 | `key_name` | string | Nova keypair name — only relevant under `use_static_credentials = true` (see [Authentication](#authentication)) |
 | `tags` | array of string | Server tags, single-word or free-form text. Purely cosmetic Nova metadata — this plugin does not read tags for anything, it recognizes its own instances by a separate metadata key set internally. `"key: value"` strings are a common formatting convention, not a distinct mechanism Nova parses |
 | `scheduler_hints` | object | e.g. `{ group = "..." }` for a (anti-)affinity server group |
@@ -182,9 +193,9 @@ shutdown_timeout = 0
       volume_size = 100
 
       [runners.autoscaler.plugin_config.server_spec]
-        imageRef = "00000000-0000-0000-0000-000000000000"
-        flavorRef = "00000000-0000-0000-0000-000000000001"
-        networks = [ { uuid = "00000000-0000-0000-0000-000000000002" } ]
+        image_name = "debian-11-infra-runners-0.1.1"
+        flavor_name = "r2.4-16"
+        network_names = [ "ci-runners-net" ]
         security_groups = [ "ci-runners" ]
 ```
 

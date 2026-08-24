@@ -260,6 +260,28 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 		g.log.Debug("Image resolved by name", "image_name", spec.ImageName, "image_ref", spec.ImageRef)
 	}
 
+	if spec.FlavorName != "" {
+		flavorRef, err := g.client.GetFlavorByName(ctx, spec.FlavorName)
+		if err != nil {
+			return "", err
+		}
+
+		spec.FlavorRef = flavorRef
+
+		g.log.Debug("Flavor resolved by name", "flavor_name", spec.FlavorName, "flavor_ref", spec.FlavorRef)
+	}
+
+	for _, networkName := range spec.NetworkNames {
+		networkID, err := g.client.GetNetworkByName(ctx, networkName)
+		if err != nil {
+			return "", err
+		}
+
+		spec.Networks = append(spec.Networks, servers.Network{UUID: networkID})
+
+		g.log.Debug("Network resolved by name", "network_name", networkName, "network_uuid", networkID)
+	}
+
 	if g.VolumeType != "" && g.VolumeSize > 0 {
 		if spec.ImageRef == "" {
 			return "", fmt.Errorf("volume_type/volume_size require server_spec.imageRef (or image_name) to be set")

@@ -2,6 +2,7 @@ package openstackclient
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"testing"
 
@@ -98,6 +99,81 @@ func TestRestoreComputeApiVersion(t *testing.T) {
 
 		assert.Equal(t, "2.79", ecc.ComputeApiVersion)
 	})
+}
+
+func TestGetFlavorByName(t *testing.T) {
+	assert := assert.New(t)
+
+	body, err := os.ReadFile("../../testdata/flavor_list.json")
+	require.NoError(t, err)
+
+	testhelper.SetupHTTP()
+	defer testhelper.TeardownHTTP()
+
+	testhelper.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	})
+
+	client := &client{
+		compute: thclient.ServiceClient(),
+	}
+
+	ctx := context.TODO()
+	flavorRef, err := client.GetFlavorByName(ctx, "r2.4-16")
+	assert.NoError(err)
+	assert.Equal("fa6e6d0a-df7c-4d63-9b93-f3cadad55fcb", flavorRef)
+}
+
+func TestGetFlavorByName_NotFound(t *testing.T) {
+	assert := assert.New(t)
+
+	body, err := os.ReadFile("../../testdata/flavor_list.json")
+	require.NoError(t, err)
+
+	testhelper.SetupHTTP()
+	defer testhelper.TeardownHTTP()
+
+	testhelper.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	})
+
+	client := &client{
+		compute: thclient.ServiceClient(),
+	}
+
+	ctx := context.TODO()
+	_, err = client.GetFlavorByName(ctx, "does-not-exist")
+	assert.ErrorIs(err, gophercloud.ErrResourceNotFound{Name: "does-not-exist", ResourceType: "flavor"})
+}
+
+func TestGetNetworkByName(t *testing.T) {
+	assert := assert.New(t)
+
+	body, err := os.ReadFile("../../testdata/network_list.json")
+	require.NoError(t, err)
+
+	testhelper.SetupHTTP()
+	defer testhelper.TeardownHTTP()
+
+	testhelper.Mux.HandleFunc("/v2.0/networks", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("nad-net-dc3", r.URL.Query().Get("name"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	})
+
+	networkClient := thclient.ServiceClient()
+	networkClient.ResourceBase = networkClient.Endpoint + "v2.0/"
+
+	client := &client{
+		network: networkClient,
+	}
+
+	ctx := context.TODO()
+	networkID, err := client.GetNetworkByName(ctx, "nad-net-dc3")
+	assert.NoError(err)
+	assert.Equal("93bc8d03-6b6d-40f3-89f1-ebccc7a9175b", networkID)
 }
 
 func TestGetImageByName_Many(t *testing.T) {

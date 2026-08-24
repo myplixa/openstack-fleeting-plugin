@@ -1,0 +1,24 @@
+{
+  "flavors": [
+    {
+      "id": "fa6e6d0a-df7c-4d63-9b93-f3cadad55fcb",
+      "name": "r2.4-16",
+      "ram": 16384,
+      "vcpus": 4,
+      "disk": 20,
+      "rxtx_factor": 1.0,
+      "os-flavor-access:is_public": true,
+      "OS-FLV-EXT-DATA:ephemeral": 0
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000099",
+      "name": "c2.4-4",
+      "ram": 4096,
+      "vcpus": 4,
+      "disk": 20,
+      "rxtx_factor": 1.0,
+      "os-flavor-access:is_public": true,
+      "OS-FLV-EXT-DATA:ephemeral": 0
+    }
+  ]
+}

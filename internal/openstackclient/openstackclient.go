@@ -11,10 +11,12 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/config"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/utils"
 	osClient "github.com/gophercloud/utils/v2/client"
 )
@@ -65,6 +67,8 @@ type ImageProperties struct {
 type Client interface {
 	GetImageProperties(ctx context.Context, imageRef string) (*ImageProperties, error)
 	GetImageByName(ctx context.Context, imageName string) (string, *ImageProperties, error)
+	GetFlavorByName(ctx context.Context, flavorName string) (string, error)
+	GetNetworkByName(ctx context.Context, networkName string) (string, error)
 	ShowServerConsoleOutput(ctx context.Context, serverId string) (string, error)
 	GetServer(ctx context.Context, serverId string) (*servers.Server, error)
 	ListServers(ctx context.Context) ([]servers.Server, error)
@@ -75,6 +79,7 @@ type Client interface {
 type client struct {
 	compute *gophercloud.ServiceClient
 	image   *gophercloud.ServiceClient
+	network *gophercloud.ServiceClient
 }
 
 func New(ctx context.Context, authConfig AuthConfig, cloudOpts *CloudOpts) (Client, error) {
@@ -117,9 +122,15 @@ func New(ctx context.Context, authConfig AuthConfig, cloudOpts *CloudOpts) (Clie
 		return nil, err
 	}
 
+	networkClient, err := openstack.NewNetworkV2(providerClient, endpointOps)
+	if err != nil {
+		return nil, err
+	}
+
 	return &client{
 		compute: computeClient,
 		image:   imageClient,
+		network: networkClient,
 	}, nil
 }
 
@@ -286,6 +297,53 @@ func (c *client) GetImageByName(ctx context.Context, imageName string) (string, 
 	}
 
 	return imgs[0].ID, out, nil
+}
+
+func (c *client) GetFlavorByName(ctx context.Context, flavorName string) (string, error) {
+	page, err := flavors.ListDetail(c.compute, flavors.ListOpts{}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list flavors: %w", err)
+	}
+
+	all, err := flavors.ExtractFlavors(page)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse flavors: %w", err)
+	}
+
+	var matches []flavors.Flavor
+	for _, f := range all {
+		if f.Name == flavorName {
+			matches = append(matches, f)
+		}
+	}
+
+	if len(matches) == 0 {
+		return "", gophercloud.ErrResourceNotFound{Name: flavorName, ResourceType: "flavor"}
+	} else if len(matches) > 1 {
+		return "", gophercloud.ErrMultipleResourcesFound{Name: flavorName, Count: len(matches), ResourceType: "flavor"}
+	}
+
+	return matches[0].ID, nil
+}
+
+func (c *client) GetNetworkByName(ctx context.Context, networkName string) (string, error) {
+	page, err := networks.List(c.network, networks.ListOpts{Name: networkName}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	all, err := networks.ExtractNetworks(page)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse networks: %w", err)
+	}
+
+	if len(all) == 0 {
+		return "", gophercloud.ErrResourceNotFound{Name: networkName, ResourceType: "network"}
+	} else if len(all) > 1 {
+		return "", gophercloud.ErrMultipleResourcesFound{Name: networkName, Count: len(all), ResourceType: "network"}
+	}
+
+	return all[0].ID, nil
 }
 
 func (c *client) ShowServerConsoleOutput(ctx context.Context, serverId string) (string, error) {

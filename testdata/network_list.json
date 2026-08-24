@@ -1,0 +1,12 @@
+{
+  "networks": [
+    {
+      "id": "93bc8d03-6b6d-40f3-89f1-ebccc7a9175b",
+      "name": "nad-net-dc3",
+      "status": "ACTIVE",
+      "admin_state_up": true,
+      "subnets": ["9cbd896e-6dc3-44c1-926d-dbe155e33758"],
+      "tenant_id": "037f95d96fcd489b8891164bb83340b9"
+    }
+  ]
+}
