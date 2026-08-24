@@ -41,7 +41,7 @@ func TestRealOpenStackProvisioning(t *testing.T) {
 
 	configFile, err := os.Open(*configFilePath)
 	require.NoError(t, err)
-	defer configFile.Close()
+	defer func() { require.NoError(t, configFile.Close()) }()
 
 	var cfg Config
 	require.NoError(t, json.NewDecoder(configFile).Decode(&cfg))

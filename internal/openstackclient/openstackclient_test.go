@@ -70,10 +70,10 @@ func TestGetImageByName(t *testing.T) {
 func TestRestoreComputeApiVersion(t *testing.T) {
 	t.Run("preserves config value when env unset", func(t *testing.T) {
 		t.Setenv("OS_COMPUTE_API_VERSION", "")
-		os.Unsetenv("OS_COMPUTE_API_VERSION")
+		require.NoError(t, os.Unsetenv("OS_COMPUTE_API_VERSION"))
 
 		ecc := &EnvCloudConfig{CloudConfig: CloudConfig{ComputeApiVersion: "2.79"}}
-		env.Parse(ecc) // simulates New()'s env.Parse clobbering ComputeApiVersion back to its envDefault
+		require.NoError(t, env.Parse(ecc)) // simulates New()'s env.Parse clobbering ComputeApiVersion back to its envDefault
 		restoreComputeApiVersion(ecc, "2.79")
 
 		assert.Equal(t, "2.79", ecc.ComputeApiVersion)
@@ -83,7 +83,7 @@ func TestRestoreComputeApiVersion(t *testing.T) {
 		t.Setenv("OS_COMPUTE_API_VERSION", "2.90")
 
 		ecc := &EnvCloudConfig{CloudConfig: CloudConfig{ComputeApiVersion: "2.79"}}
-		env.Parse(ecc)
+		require.NoError(t, env.Parse(ecc))
 		restoreComputeApiVersion(ecc, "2.79")
 
 		assert.Equal(t, "2.90", ecc.ComputeApiVersion)
@@ -91,10 +91,10 @@ func TestRestoreComputeApiVersion(t *testing.T) {
 
 	t.Run("falls back to envDefault when nothing set", func(t *testing.T) {
 		t.Setenv("OS_COMPUTE_API_VERSION", "")
-		os.Unsetenv("OS_COMPUTE_API_VERSION")
+		require.NoError(t, os.Unsetenv("OS_COMPUTE_API_VERSION"))
 
 		ecc := &EnvCloudConfig{}
-		env.Parse(ecc)
+		require.NoError(t, env.Parse(ecc))
 		restoreComputeApiVersion(ecc, "")
 
 		assert.Equal(t, "2.79", ecc.ComputeApiVersion)
@@ -112,7 +112,7 @@ func TestGetFlavorByName(t *testing.T) {
 
 	testhelper.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 
 	client := &client{
@@ -136,7 +136,7 @@ func TestGetFlavorByName_NotFound(t *testing.T) {
 
 	testhelper.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 
 	client := &client{
@@ -160,7 +160,7 @@ func TestGetNetworkByName(t *testing.T) {
 	testhelper.Mux.HandleFunc("/v2.0/networks", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("nad-net-dc3", r.URL.Query().Get("name"))
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 
 	networkClient := thclient.ServiceClient()
