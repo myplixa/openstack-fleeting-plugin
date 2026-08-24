@@ -64,6 +64,10 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 		g.ServerSpec.Name = g.Name
 	}
 
+	if err := resolveUserDataFile(&g.ServerSpec); err != nil {
+		return provider.ProviderInfo{}, err
+	}
+
 	_, err = g.ServerSpec.ToServerCreateMap()
 	if err != nil {
 		return provider.ProviderInfo{}, fmt.Errorf("failed to check server_spec: %w", err)

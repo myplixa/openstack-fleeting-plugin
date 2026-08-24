@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"regexp"
 	"strings"
 
@@ -28,7 +29,25 @@ type ExtCreateOpts struct {
 	NetworkNames   []string                   `json:"network_names,omitempty"`
 	SecurityGroups []string                   `json:"security_groups,omitempty"`
 	UserData       string                     `json:"user_data,omitempty"`
+	UserDataFile   string                     `json:"user_data_file,omitempty"`
 	SchedulerHints *servers.SchedulerHintOpts `json:"scheduler_hints,omitempty"`
+}
+
+// resolveUserDataFile loads UserDataFile into UserData when the latter isn't
+// already set inline, so plugin_config.server_spec.user_data can live in an
+// external file referenced by path instead of a multi-line TOML string.
+func resolveUserDataFile(opts *ExtCreateOpts) error {
+	if opts.UserDataFile == "" || opts.UserData != "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(opts.UserDataFile)
+	if err != nil {
+		return fmt.Errorf("reading user_data_file: %w", err)
+	}
+
+	opts.UserData = string(data)
+	return nil
 }
 
 func (opts ExtCreateOpts) ToServerCreateMap() (map[string]interface{}, error) {

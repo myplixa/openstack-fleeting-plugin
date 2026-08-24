@@ -3,6 +3,7 @@ package fpoc
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,4 +133,38 @@ func TestInsertSSHKeyIgn(t *testing.T) {
 			assert.Equal(tc.expected, spec.UserData)
 		})
 	}
+}
+
+func TestResolveUserDataFile(t *testing.T) {
+	t.Run("loads file when user_data is empty", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cloud-init.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("#cloud-config\npackages:\n  - docker.io\n"), 0o600))
+
+		opts := &ExtCreateOpts{UserDataFile: path}
+		require.NoError(t, resolveUserDataFile(opts))
+
+		assert.Equal(t, "#cloud-config\npackages:\n  - docker.io\n", opts.UserData)
+	})
+
+	t.Run("inline user_data takes precedence over file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cloud-init.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("#cloud-config\npackages:\n  - docker.io\n"), 0o600))
+
+		opts := &ExtCreateOpts{UserDataFile: path, UserData: "#cloud-config\ninline: true\n"}
+		require.NoError(t, resolveUserDataFile(opts))
+
+		assert.Equal(t, "#cloud-config\ninline: true\n", opts.UserData)
+	})
+
+	t.Run("no-op when neither is set", func(t *testing.T) {
+		opts := &ExtCreateOpts{}
+		require.NoError(t, resolveUserDataFile(opts))
+		assert.Empty(t, opts.UserData)
+	})
+
+	t.Run("missing file returns error", func(t *testing.T) {
+		opts := &ExtCreateOpts{UserDataFile: filepath.Join(t.TempDir(), "does-not-exist.yaml")}
+		err := resolveUserDataFile(opts)
+		require.ErrorContains(t, err, "reading user_data_file")
+	})
 }

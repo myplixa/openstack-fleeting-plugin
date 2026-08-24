@@ -33,7 +33,7 @@ See [Advanced Configuration](#advanced-configuration) for everything else — `c
 | `networks` / `network_names` | array | `[{ uuid = "..." }]`, or a plain list of network names — see [Resolving Names](#resolving-names) |
 | `security_groups` | array of string | Security group names |
 
-`server_spec.name`, if set, is ignored — see [VM Naming](#vm-naming). See [Advanced Configuration](#advanced-configuration) for `key_name`, `tags`, `scheduler_hints`, `user_data`, and everything else the Compute API accepts here.
+`server_spec.name`, if set, is ignored — see [VM Naming](#vm-naming). See [Advanced Configuration](#advanced-configuration) for `key_name`, `tags`, `scheduler_hints`, `user_data`/`user_data_file`, and everything else the Compute API accepts here.
 
 ### Resolving Names
 
@@ -139,6 +139,7 @@ Everything below has a working default and exists for edge cases — most deploy
 | `tags` | array of string | Server tags, single-word or free-form text. Purely cosmetic Nova metadata — this plugin does not read tags for anything, it recognizes its own instances by a separate metadata key set internally. `"key: value"` strings are a common formatting convention, not a distinct mechanism Nova parses |
 | `scheduler_hints` | object | e.g. `{ group = "..." }` for a (anti-)affinity server group |
 | `user_data` | string | Raw `#cloud-config` or Ignition JSON, merged with rather than replaced by the plugin's own SSH key injection — see [Authentication](#authentication) |
+| `user_data_file` | string | Path to a file containing the same content as `user_data`, for keeping a multi-line cloud-config out of `config.toml`. Only used if `user_data` isn't already set inline; read once at plugin `Init()` |
 | everything else `servers.CreateOpts` accepts | — | `description`, `availability_zone`, `metadata`, `config_drive`, `personality`, `access_ipv4`/`access_ipv6`, `hostname`, `OS-DCF:diskConfig`, `hypervisor_hostname`, etc. — passed straight through to the [Compute API](https://docs.openstack.org/api-ref/compute/#create-server) if set, none of it read by the plugin itself. `adminPass` in particular has no effect on how this plugin connects — access is always SSH-key based |
 
 
