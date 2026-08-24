@@ -1,10 +1,9 @@
-openstack-fleeting-plugin
-==========================
-
-GitLab [Fleeting](https://gitlab.com/gitlab-org/fleeting/fleeting) plugin for OpenStack, used with the `instance` or `docker-autoscaler` executor.
+# openstack-fleeting-plugin
 
 > [!note]
-> This repository is a detached fork of [sardinasystems/fleeting-plugin-openstack](https://github.com/sardinasystems/fleeting-plugin-openstack). It has its own history and its own releases going forward, with no live sync back to upstream.
+> This is a fork of [sardinasystems/fleeting-plugin-openstack](https://github.com/sardinasystems/fleeting-plugin-openstack), detached from upstream. It adds `volume_type`/`volume_size` boot-from-volume support (see [Resource Sizing](#resource-sizing)), dynamic SSH key injection for cloud-init images and not just Ignition (see [Default connector config](#default-connector-config)), computes VM names itself instead of requiring a `server_spec.name` template (see [VM Naming](#vm-naming)), and fixes real bugs in `nova_microversion`/`boot_time`/`min_count` handling.
+
+This is a [fleeting plugin](https://gitlab.com/gitlab-org/fleeting/fleeting) for OpenStack, used with the `instance` or `docker-autoscaler` executor. It allows GitLab Runner to provision virtual machines from an image, enabling CI/CD jobs to be executed on dynamically created instances in your OpenStack project.
 
 Documentation: https://docs.gitlab.com/runner/executors/docker_autoscaler.html
 
