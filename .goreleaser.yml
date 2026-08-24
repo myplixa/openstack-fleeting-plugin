@@ -7,14 +7,13 @@ builds:
     main: ./cmd/fleeting-plugin-openstack
     ldflags: >-
       -s -w
-      -X github.com/sardinasystems/fleeting-plugin-openstack.Version={{.Version}}
-      -X github.com/sardinasystems/fleeting-plugin-openstack.Revision={{.FullCommit}}
-      -X github.com/sardinasystems/fleeting-plugin-openstack.Branch={{.Branch}}
-      -X github.com/sardinasystems/fleeting-plugin-openstack.BuildUser=goreleaser@github-actions
-      -X github.com/sardinasystems/fleeting-plugin-openstack.BuildDate={{time "20060102-15:04:05"}}
+      -X github.com/myplixa/openstack-fleeting-plugin.Version={{.Version}}
+      -X github.com/myplixa/openstack-fleeting-plugin.Revision={{.FullCommit}}
+      -X github.com/myplixa/openstack-fleeting-plugin.Branch={{.Branch}}
+      -X github.com/myplixa/openstack-fleeting-plugin.BuildUser=goreleaser@github-actions
+      -X github.com/myplixa/openstack-fleeting-plugin.BuildDate={{time "20060102-15:04:05"}}
 
-    # Set the binary output location to bin/ so archive will comply with Sensu Go Asset structure
-    binary: bin/{{ .ProjectName }}
+    binary: "{{ .ProjectName }}"
     targets:
       - linux_386
       - linux_amd64
@@ -26,8 +25,5 @@ checksum:
   algorithm: sha512
 
 archives:
-  - id: tar
-    formats: tar.gz
-    files:
-      - LICENSE
-      - README.md
+  - id: binary
+    formats: binary
