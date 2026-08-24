@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"os"
 
+	"time"
+
 	"github.com/caarlos0/env/v11"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/config"
@@ -74,12 +77,15 @@ type Client interface {
 	ListServers(ctx context.Context) ([]servers.Server, error)
 	CreateServer(ctx context.Context, spec servers.CreateOptsBuilder, hintOpts servers.SchedulerHintOptsBuilder) (*servers.Server, error)
 	DeleteServer(ctx context.Context, serverId string) error
+	CreateVolumeFromImage(ctx context.Context, imageRef, volumeType string, sizeGB int, availabilityZone, name string) (string, error)
+	DeleteVolume(ctx context.Context, volumeID string) error
 }
 
 type client struct {
-	compute *gophercloud.ServiceClient
-	image   *gophercloud.ServiceClient
-	network *gophercloud.ServiceClient
+	compute      *gophercloud.ServiceClient
+	image        *gophercloud.ServiceClient
+	network      *gophercloud.ServiceClient
+	blockstorage *gophercloud.ServiceClient
 }
 
 func New(ctx context.Context, authConfig AuthConfig, cloudOpts *CloudOpts) (Client, error) {
@@ -127,10 +133,16 @@ func New(ctx context.Context, authConfig AuthConfig, cloudOpts *CloudOpts) (Clie
 		return nil, err
 	}
 
+	blockstorageClient, err := openstack.NewBlockStorageV3(providerClient, endpointOps)
+	if err != nil {
+		return nil, err
+	}
+
 	return &client{
-		compute: computeClient,
-		image:   imageClient,
-		network: networkClient,
+		compute:      computeClient,
+		image:        imageClient,
+		network:      networkClient,
+		blockstorage: blockstorageClient,
 	}, nil
 }
 
@@ -376,4 +388,48 @@ func (c *client) CreateServer(ctx context.Context, spec servers.CreateOptsBuilde
 
 func (c *client) DeleteServer(ctx context.Context, serverId string) error {
 	return servers.Delete(ctx, c.compute, serverId).ExtractErr()
+}
+
+// CreateVolumeFromImage creates a Cinder volume from the given image, pinned
+// to availabilityZone, and blocks until it reaches "available". Used by the
+// volume_pre_create path to avoid the AZ mismatch that can occur when Nova
+// creates the boot volume implicitly during server create (see
+// https://docs.openstack.org/nova/latest/admin/availability-zones.html,
+// [cinder] cross_az_attach). The returned volume ID is valid even when err
+// is non-nil, so the caller can clean it up.
+func (c *client) CreateVolumeFromImage(ctx context.Context, imageRef, volumeType string, sizeGB int, availabilityZone, name string) (string, error) {
+	vol, err := volumes.Create(ctx, c.blockstorage, volumes.CreateOpts{
+		Size:             sizeGB,
+		VolumeType:       volumeType,
+		ImageID:          imageRef,
+		AvailabilityZone: availabilityZone,
+		Name:             name,
+	}, nil).Extract()
+	if err != nil {
+		return "", fmt.Errorf("failed to create volume: %w", err)
+	}
+
+	for {
+		current, err := volumes.Get(ctx, c.blockstorage, vol.ID).Extract()
+		if err != nil {
+			return vol.ID, fmt.Errorf("failed to poll volume %s: %w", vol.ID, err)
+		}
+
+		switch current.Status {
+		case "available":
+			return vol.ID, nil
+		case "error", "error_deleting":
+			return vol.ID, fmt.Errorf("volume %s entered status %q while creating from image", vol.ID, current.Status)
+		}
+
+		select {
+		case <-ctx.Done():
+			return vol.ID, fmt.Errorf("timed out waiting for volume %s to become available: %w", vol.ID, ctx.Err())
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func (c *client) DeleteVolume(ctx context.Context, volumeID string) error {
+	return volumes.Delete(ctx, c.blockstorage, volumeID, nil).ExtractErr()
 }

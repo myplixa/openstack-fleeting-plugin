@@ -33,8 +33,9 @@ type InstanceGroup struct {
 	BootTimeS        string        `json:"boot_time"`
 	BootTime         time.Duration
 
-	VolumeType string `json:"volume_type,omitempty"`
-	VolumeSize int    `json:"volume_size,omitempty"`
+	VolumeType      string `json:"volume_type,omitempty"`
+	VolumeSize      int    `json:"volume_size,omitempty"`
+	VolumePreCreate bool   `json:"volume_pre_create,omitempty"`
 
 	client    openstackclient.Client
 	settings  provider.Settings
@@ -286,27 +287,59 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 		g.log.Debug("Network resolved by name", "network_name", networkName, "network_uuid", networkID)
 	}
 
+	var preCreatedVolumeID string
+
 	if g.VolumeType != "" && g.VolumeSize > 0 {
 		if spec.ImageRef == "" {
 			return "", fmt.Errorf("volume_type/volume_size require server_spec.imageRef (or image_name) to be set")
 		}
 
-		spec.BlockDevice = []servers.BlockDevice{
-			{
-				SourceType:          servers.SourceImage,
-				UUID:                spec.ImageRef,
-				DestinationType:     servers.DestinationVolume,
-				VolumeSize:          g.VolumeSize,
-				VolumeType:          g.VolumeType,
-				BootIndex:           0,
-				DeleteOnTermination: true,
-			},
+		if g.VolumePreCreate {
+			volCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			volumeID, err := g.client.CreateVolumeFromImage(volCtx, spec.ImageRef, g.VolumeType, g.VolumeSize, spec.AvailabilityZone, spec.Name+"-root")
+			cancel()
+			if err != nil {
+				if volumeID != "" {
+					if delErr := g.client.DeleteVolume(ctx, volumeID); delErr != nil {
+						g.log.Error("Failed to clean up volume after create failure", "volume_id", volumeID, "err", delErr)
+					}
+				}
+				return "", fmt.Errorf("pre-creating boot volume: %w", err)
+			}
+
+			preCreatedVolumeID = volumeID
+			spec.BlockDevice = []servers.BlockDevice{
+				{
+					SourceType:          servers.SourceVolume,
+					UUID:                volumeID,
+					DestinationType:     servers.DestinationVolume,
+					BootIndex:           0,
+					DeleteOnTermination: true,
+				},
+			}
+		} else {
+			spec.BlockDevice = []servers.BlockDevice{
+				{
+					SourceType:          servers.SourceImage,
+					UUID:                spec.ImageRef,
+					DestinationType:     servers.DestinationVolume,
+					VolumeSize:          g.VolumeSize,
+					VolumeType:          g.VolumeType,
+					BootIndex:           0,
+					DeleteOnTermination: true,
+				},
+			}
 		}
 		spec.ImageRef = ""
 	}
 
 	srv, err := g.client.CreateServer(ctx, spec, hintOpts)
 	if err != nil {
+		if preCreatedVolumeID != "" {
+			if delErr := g.client.DeleteVolume(ctx, preCreatedVolumeID); delErr != nil {
+				g.log.Error("Failed to clean up pre-created volume after server create failure", "volume_id", preCreatedVolumeID, "err", delErr)
+			}
+		}
 		return "", err
 	}
 

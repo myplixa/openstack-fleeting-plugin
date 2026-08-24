@@ -2,6 +2,7 @@ package openstackclient
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -195,4 +196,80 @@ func TestGetImageByName_Many(t *testing.T) {
 	ctx := context.TODO()
 	_, _, err = client.GetImageByName(ctx, "flatcar")
 	assert.ErrorIs(err, gophercloud.ErrMultipleResourcesFound{Name: "flatcar", Count: 8, ResourceType: "image"})
+}
+
+func TestCreateVolumeFromImage(t *testing.T) {
+	assert := assert.New(t)
+
+	testhelper.SetupHTTP()
+	defer testhelper.TeardownHTTP()
+
+	pollCount := 0
+	testhelper.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method)
+		body, _ := io.ReadAll(r.Body)
+		assert.Contains(string(body), `"availability_zone":"dc3"`)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"volume": {"id": "vol-1", "status": "creating"}}`))
+	})
+	testhelper.Mux.HandleFunc("/volumes/vol-1", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodGet, r.Method)
+		pollCount++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volume": {"id": "vol-1", "status": "available"}}`))
+	})
+
+	client := &client{blockstorage: thclient.ServiceClient()}
+
+	ctx := context.TODO()
+	volumeID, err := client.CreateVolumeFromImage(ctx, "image-1", "ssd", 100, "dc3", "test-root")
+	assert.NoError(err)
+	assert.Equal("vol-1", volumeID)
+	assert.GreaterOrEqual(pollCount, 1)
+}
+
+func TestCreateVolumeFromImage_ErrorStatus(t *testing.T) {
+	assert := assert.New(t)
+
+	testhelper.SetupHTTP()
+	defer testhelper.TeardownHTTP()
+
+	testhelper.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"volume": {"id": "vol-2", "status": "creating"}}`))
+	})
+	testhelper.Mux.HandleFunc("/volumes/vol-2", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"volume": {"id": "vol-2", "status": "error"}}`))
+	})
+
+	client := &client{blockstorage: thclient.ServiceClient()}
+
+	ctx := context.TODO()
+	volumeID, err := client.CreateVolumeFromImage(ctx, "image-1", "ssd", 100, "dc3", "test-root")
+	require.Error(t, err)
+	assert.Equal("vol-2", volumeID, "volume ID must still be returned on error so the caller can clean it up")
+	assert.ErrorContains(err, "entered status")
+}
+
+func TestDeleteVolume(t *testing.T) {
+	assert := assert.New(t)
+
+	testhelper.SetupHTTP()
+	defer testhelper.TeardownHTTP()
+
+	called := false
+	testhelper.Mux.HandleFunc("/volumes/vol-3", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodDelete, r.Method)
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := &client{blockstorage: thclient.ServiceClient()}
+
+	err := client.DeleteVolume(context.TODO(), "vol-3")
+	assert.NoError(err)
+	assert.True(called)
 }

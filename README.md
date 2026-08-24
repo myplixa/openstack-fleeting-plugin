@@ -117,6 +117,19 @@ By default the instance boots from the flavor's own local disk, at whatever size
 > [!note]
 > Some flavor catalogs forbid booting from local disk entirely (a `CUSTOM_LOCAL_DISK: forbidden` trait, not visible via `openstack flavor show` for non-admin users — only in the flavor object embedded in a server's own create/show response) — `volume_type`/`volume_size` are required, not optional, on those. Boot-from-volume can also be flakier than a local-disk boot depending on the backend (observed: real, intermittent host-level failures unrelated to this plugin). This isn't something the plugin can paper over — it's exactly the kind of transient failure GitLab Runner's own autoscaler is already designed to retry past, so a failed clone should simply be allowed to fail and get retried, not masked with client-side retry logic in the plugin itself.
 
+### Boot-Volume Creation Mode
+
+`volume_pre_create = true` switches how the boot volume gets created, for deployments where the default path is unreliable:
+
+```toml
+[runners.autoscaler.plugin_config]
+  volume_type = "ssd"
+  volume_size = 100
+  volume_pre_create = true
+```
+
+By default (`false`), the plugin asks Nova to create the volume from the image as part of `block_device_mapping_v2` (`source_type: image`), in the same request that creates the server. Nova's own call to Cinder for that implicit volume does **not** necessarily land in the same availability zone as the instance — this is governed by Nova's `[cinder] cross_az_attach` setting (default `true`, meaning cross-AZ is allowed), not by this plugin's `server_spec.availability_zone`. See the [Nova availability zones docs](https://docs.openstack.org/nova/latest/admin/availability-zones.html#cinder-cross-az-attach) for the authoritative explanation. On deployments where this leads to real scheduling failures, `volume_pre_create = true` creates the volume as its own step first — via Cinder directly, explicitly pinned to `server_spec.availability_zone` — waits for it to become `available`, and only then creates the server referencing that volume (`source_type: volume`). If either step fails, the plugin cleans up the volume itself rather than leaking it.
+
 
 ## Advanced Configuration
 
@@ -127,6 +140,7 @@ Everything below has a working default and exists for edge cases — most deploy
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `clouds_config` | string | unset | Path to `clouds.yaml`. Only relevant if `cloud` is also set and the file isn't in one of `clouds.Parse`'s default search locations |
+| `volume_pre_create` | bool | `false` | Create the boot volume as an explicit, AZ-pinned Cinder step before the server, instead of letting Nova create it implicitly. Only relevant with `volume_type`/`volume_size` — see [Boot-Volume Creation Mode](#boot-volume-creation-mode) |
 | `nova_microversion` | string | `2.79` | Nova Compute API microversion. An explicit `OS_COMPUTE_API_VERSION` environment variable takes priority over this field if both are set |
 | `boot_time` | string | `2m` | How long to wait for cloud-init/Ignition to finish (checked via console log) before treating the instance as running anyway, Go duration string e.g. `"5m"` |
 | `use_ignition` | bool | `false` | Use Ignition (Fedora CoreOS / Flatcar) instead of cloud-init for SSH key injection |
