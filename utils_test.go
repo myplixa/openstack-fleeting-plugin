@@ -168,3 +168,44 @@ func TestResolveUserDataFile(t *testing.T) {
 		require.ErrorContains(t, err, "reading user_data_file")
 	})
 }
+
+func TestRenderUserDataTemplate(t *testing.T) {
+	t.Run("substitutes RunnerName and Vars", func(t *testing.T) {
+		opts := &ExtCreateOpts{UserData: "runner_tag = \"{{ .RunnerName }}\"\ntoken = \"{{ .Vars.download_ci_auth }}\"\n"}
+
+		require.NoError(t, renderUserDataTemplate(opts, "ptnad-cloud", map[string]string{"download_ci_auth": "secret-token"}))
+
+		assert.Equal(t, "runner_tag = \"ptnad-cloud\"\ntoken = \"secret-token\"\n", opts.UserData)
+	})
+
+	t.Run("substitutes Hostname with the control host's own hostname", func(t *testing.T) {
+		wantHostname, err := os.Hostname()
+		require.NoError(t, err)
+
+		opts := &ExtCreateOpts{UserData: "instance = \"{{ .Hostname }}\"\n"}
+
+		require.NoError(t, renderUserDataTemplate(opts, "ptnad-cloud", nil))
+
+		assert.Equal(t, "instance = \""+wantHostname+"\"\n", opts.UserData)
+	})
+
+	t.Run("plain content with no directives round-trips unchanged", func(t *testing.T) {
+		opts := &ExtCreateOpts{UserData: "#cloud-config\npackages:\n  - docker.io\n"}
+
+		require.NoError(t, renderUserDataTemplate(opts, "ptnad-cloud", nil))
+
+		assert.Equal(t, "#cloud-config\npackages:\n  - docker.io\n", opts.UserData)
+	})
+
+	t.Run("no-op when user_data is empty", func(t *testing.T) {
+		opts := &ExtCreateOpts{}
+		require.NoError(t, renderUserDataTemplate(opts, "ptnad-cloud", nil))
+		assert.Empty(t, opts.UserData)
+	})
+
+	t.Run("broken template syntax returns an error", func(t *testing.T) {
+		opts := &ExtCreateOpts{UserData: "runner_tag = \"{{ .RunnerName \"\n"}
+		err := renderUserDataTemplate(opts, "ptnad-cloud", nil)
+		require.ErrorContains(t, err, "parsing user_data as template")
+	})
+}

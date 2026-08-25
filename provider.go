@@ -37,6 +37,8 @@ type InstanceGroup struct {
 	VolumeSize      int    `json:"volume_size,omitempty"`
 	VolumePreCreate bool   `json:"volume_pre_create,omitempty"`
 
+	CloudInitVars map[string]string `json:"cloud_init_vars,omitempty"`
+
 	client    openstackclient.Client
 	settings  provider.Settings
 	log       hclog.Logger
@@ -66,6 +68,10 @@ func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings pro
 	}
 
 	if err := resolveUserDataFile(&g.ServerSpec); err != nil {
+		return provider.ProviderInfo{}, err
+	}
+
+	if err := renderUserDataTemplate(&g.ServerSpec, g.Name, g.CloudInitVars); err != nil {
 		return provider.ProviderInfo{}, err
 	}
 

@@ -144,6 +144,7 @@ Everything below has a working default and exists for edge cases — most deploy
 | `nova_microversion` | string | `2.79` | Nova Compute API microversion. An explicit `OS_COMPUTE_API_VERSION` environment variable takes priority over this field if both are set |
 | `boot_time` | string | `2m` | How long to wait for cloud-init/Ignition to finish (checked via console log) before treating the instance as running anyway, Go duration string e.g. `"5m"` |
 | `use_ignition` | bool | `false` | Use Ignition (Fedora CoreOS / Flatcar) instead of cloud-init for SSH key injection |
+| `cloud_init_vars` | map[string]string | unset | Values made available to `user_data`/`user_data_file` as `{{ .Vars.<key> }}` when rendered as a template — see [Templating user_data](#templating-user_data) |
 
 `server_spec`, on top of the [common fields](#server-spec):
 
@@ -155,6 +156,32 @@ Everything below has a working default and exists for edge cases — most deploy
 | `user_data` | string | Raw `#cloud-config` or Ignition JSON, merged with rather than replaced by the plugin's own SSH key injection — see [Authentication](#authentication) |
 | `user_data_file` | string | Path to a file containing the same content as `user_data`, for keeping a multi-line cloud-config out of `config.toml`. Only used if `user_data` isn't already set inline; read once at plugin `Init()` |
 | everything else `servers.CreateOpts` accepts | — | `description`, `availability_zone`, `metadata`, `config_drive`, `personality`, `access_ipv4`/`access_ipv6`, `hostname`, `OS-DCF:diskConfig`, `hypervisor_hostname`, etc. — passed straight through to the [Compute API](https://docs.openstack.org/api-ref/compute/#create-server) if set, none of it read by the plugin itself. `adminPass` in particular has no effect on how this plugin connects — access is always SSH-key based |
+
+### Templating user_data
+
+Whatever ends up in `user_data` (inline or loaded from `user_data_file`) is rendered as a Go [`text/template`](https://pkg.go.dev/text/template) once at plugin `Init()`, before the SSH key gets merged in — mirroring the vSphere fleeting plugin's `cloud_init_extra_file` templating. This lets the same cloud-init content be shared across multiple `[[runners]]` tiers instead of hardcoding a per-tier value like a monitoring `runner_tag` into a separate copy of the file for each tier:
+
+| Variable | Value |
+|----------|-------|
+| `{{ .RunnerName }}` | `plugin_config.name` — the same value used to build VM names and the `fleeting-cluster` metadata tag |
+| `{{ .Hostname }}` | The control host's own hostname (where the plugin runs), not the guest's |
+| `{{ .Vars.<key> }}` | From `cloud_init_vars` — the place for values the file needs but that shouldn't be hardcoded into it (tokens, endpoints) |
+
+```toml
+[runners.autoscaler.plugin_config]
+  name = "ptnad-cloud"
+  cloud_init_vars = { download_ci_auth = "..." }
+  [runners.autoscaler.plugin_config.server_spec]
+    user_data_file = "/etc/gitlab-runner/cloud-init-runners-ci.yaml"
+```
+
+```yaml
+# cloud-init-runners-ci.yaml
+runcmd:
+  - curl -fsSL "https://{{ .Vars.download_ci_auth }}@repo.example.com/..." -o /tmp/thing
+```
+
+Content with no `{{ }}` directives round-trips unchanged, so this is a no-op for plain, non-templated `user_data`.
 
 
 ## OpenStack Setup

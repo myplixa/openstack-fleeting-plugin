@@ -1,12 +1,14 @@
 package fpoc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
 	"regexp"
 	"strings"
+	"text/template"
 
 	igncfg "github.com/coreos/ignition/v2/config/v3_4"
 	igntyp "github.com/coreos/ignition/v2/config/v3_4/types"
@@ -47,6 +49,53 @@ func resolveUserDataFile(opts *ExtCreateOpts) error {
 	}
 
 	opts.UserData = string(data)
+	return nil
+}
+
+// UserDataTemplateVars is the data made available to user_data/user_data_file
+// when rendered as a Go text/template, mirroring the vSphere fleeting
+// plugin's cloud_init_extra_file templating ({{ .RunnerName }}/{{ .Hostname
+// }}/{{ .Vars.<key> }}) so the same cloud-init content can be shared across
+// multiple [[runners]] tiers instead of hardcoding per-tier values like
+// runner_tag.
+type UserDataTemplateVars struct {
+	// RunnerName is plugin_config.name — the same value used to build VM
+	// names and the fleeting-cluster metadata tag.
+	RunnerName string
+	// Hostname is the control host's own hostname (where the plugin runs),
+	// not the guest's — matching the vSphere plugin's semantics.
+	Hostname string
+	// Vars comes from plugin_config.cloud_init_vars, for values the
+	// template needs but that shouldn't be hardcoded into the file
+	// (tokens, endpoints).
+	Vars map[string]string
+}
+
+// renderUserDataTemplate parses UserData as a Go text/template and executes
+// it in place. Content with no "{{ }}" directives round-trips unchanged, so
+// this is a no-op for plain, non-templated user_data.
+func renderUserDataTemplate(opts *ExtCreateOpts, runnerName string, vars map[string]string) error {
+	if opts.UserData == "" {
+		return nil
+	}
+
+	hostname, _ := os.Hostname()
+
+	tmpl, err := template.New("user_data").Parse(opts.UserData)
+	if err != nil {
+		return fmt.Errorf("parsing user_data as template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, UserDataTemplateVars{
+		RunnerName: runnerName,
+		Hostname:   hostname,
+		Vars:       vars,
+	}); err != nil {
+		return fmt.Errorf("rendering user_data template: %w", err)
+	}
+
+	opts.UserData = buf.String()
 	return nil
 }
 
