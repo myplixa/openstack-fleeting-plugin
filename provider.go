@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +45,13 @@ type InstanceGroup struct {
 	log       hclog.Logger
 	imgProps  atomic.Pointer[openstackclient.ImageProperties]
 	sshPubKey string
+
+	// nameToID caches server Name -> UUID. GitLab Runner/taskscaler tracks
+	// instances by whatever ID Update() reports (now the human-readable
+	// Name, to match what's shown in monitoring), but the OpenStack Nova
+	// API (GetServer/DeleteServer) only accepts the real UUID, so
+	// Decrease()/ConnectInfo() resolve back through this cache.
+	nameToID sync.Map
 }
 
 func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings provider.Settings) (provider.ProviderInfo, error) {
@@ -162,7 +170,7 @@ func (g *InstanceGroup) Update(ctx context.Context, update func(instance string,
 			}
 		}
 
-		update(srv.ID, state)
+		update(srv.Name, state)
 	}
 
 	return reterr
@@ -170,12 +178,12 @@ func (g *InstanceGroup) Update(ctx context.Context, update func(instance string,
 
 func (g *InstanceGroup) Increase(ctx context.Context, delta int) (succeeded int, err error) {
 	for idx := 0; idx < delta; idx++ {
-		id, err2 := g.createInstance(ctx)
+		name, err2 := g.createInstance(ctx)
 		if err2 != nil {
 			g.log.Error("Failed to create instance", "err", err)
 			err = errors.Join(err, err2)
 		} else {
-			g.log.Info("Instance creation request successful", "id", id)
+			g.log.Info("Instance creation request successful", "name", name)
 			succeeded++
 		}
 	}
@@ -191,20 +199,54 @@ func (g *InstanceGroup) Decrease(ctx context.Context, instances []string) (succe
 	}
 
 	succeeded = make([]string, 0, len(instances))
-	for _, id := range instances {
-		err2 := g.client.DeleteServer(ctx, id)
+	for _, name := range instances {
+		id, err2 := g.resolveInstanceID(ctx, name)
 		if err2 != nil {
-			g.log.Error("Failed to delete instance", "err", err2, "id", id)
+			g.log.Error("Failed to resolve instance id", "err", err2, "name", name)
+			err = errors.Join(err, err2)
+			continue
+		}
+
+		err2 = g.client.DeleteServer(ctx, id)
+		if err2 != nil {
+			g.log.Error("Failed to delete instance", "err", err2, "name", name, "id", id)
 			err = errors.Join(err, err2)
 		} else {
-			g.log.Info("Instance deletion request successful", "id", id)
-			succeeded = append(succeeded, id)
+			g.log.Info("Instance deletion request successful", "name", name, "id", id)
+			succeeded = append(succeeded, name)
+			g.nameToID.Delete(name)
 		}
 	}
 
 	g.log.Info("Decrease", "instances", instances)
 
 	return
+}
+
+// resolveInstanceID resolves a server Name (the ID that GitLab
+// Runner/taskscaler tracks, see Update()) to its OpenStack UUID, which the
+// Nova API requires for GetServer/DeleteServer. Falls back to a live
+// ListServers call if the name isn't cached yet - e.g. right after Increase()
+// on a plugin instance that hasn't run a getInstances() poll since, or after
+// a plugin restart before the first Update() call.
+func (g *InstanceGroup) resolveInstanceID(ctx context.Context, name string) (string, error) {
+	if id, ok := g.nameToID.Load(name); ok {
+		return id.(string), nil
+	}
+
+	allServers, err := g.client.ListServers(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving instance id for %q: %w", name, err)
+	}
+
+	for _, srv := range allServers {
+		if srv.Name == name {
+			g.nameToID.Store(srv.Name, srv.ID)
+			return srv.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("no server found with name %q", name)
 }
 
 func (g *InstanceGroup) getInstances(ctx context.Context) ([]servers.Server, error) {
@@ -220,6 +262,7 @@ func (g *InstanceGroup) getInstances(ctx context.Context) ([]servers.Server, err
 			continue
 		}
 
+		g.nameToID.Store(srv.Name, srv.ID)
 		filteredServers = append(filteredServers, srv)
 	}
 
@@ -349,13 +392,23 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	return srv.ID, nil
+	// Nova's create-server response only includes a minimal representation
+	// (id, adminPass, links) - not name - so use spec.Name (which we set
+	// above) rather than srv.Name, which would be empty here.
+	g.nameToID.Store(spec.Name, srv.ID)
+
+	return spec.Name, nil
 }
 
 func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (provider.ConnectInfo, error) {
-	srv, err := g.client.GetServer(ctx, instanceID)
+	id, err := g.resolveInstanceID(ctx, instanceID)
 	if err != nil {
-		return provider.ConnectInfo{}, fmt.Errorf("failed to get server %s: %w", instanceID, err)
+		return provider.ConnectInfo{}, fmt.Errorf("failed to resolve instance %s: %w", instanceID, err)
+	}
+
+	srv, err := g.client.GetServer(ctx, id)
+	if err != nil {
+		return provider.ConnectInfo{}, fmt.Errorf("failed to get server %s (%s): %w", instanceID, id, err)
 	}
 
 	if srv.Status != "ACTIVE" {
