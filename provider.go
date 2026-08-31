@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -400,6 +402,31 @@ func (g *InstanceGroup) createInstance(ctx context.Context) (string, error) {
 	return spec.Name, nil
 }
 
+// resolveIPAddress picks the address used to reach srv, preferring
+// AccessIPv4 and falling back to the first address found across its
+// attached networks. Shared by ConnectInfo and Heartbeat so they never
+// disagree on which address a given instance is reachable at.
+func (g *InstanceGroup) resolveIPAddress(srv *servers.Server) (string, error) {
+	if srv.AccessIPv4 != "" {
+		return srv.AccessIPv4, nil
+	}
+
+	netAddrs, err := extractAddresses(srv)
+	if err != nil {
+		return "", err
+	}
+
+	var ipAddr string
+	for net, addrs := range netAddrs {
+		for _, addr := range addrs {
+			ipAddr = addr.Address
+			g.log.Debug("Use address", "network", net, "ip_address", ipAddr)
+		}
+	}
+
+	return ipAddr, nil
+}
+
 func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (provider.ConnectInfo, error) {
 	id, err := g.resolveInstanceID(ctx, instanceID)
 	if err != nil {
@@ -415,19 +442,9 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (pro
 		return provider.ConnectInfo{}, fmt.Errorf("instance status is not active: %s", srv.Status)
 	}
 
-	ipAddr := srv.AccessIPv4
-	if ipAddr == "" {
-		netAddrs, err := extractAddresses(srv)
-		if err != nil {
-			return provider.ConnectInfo{}, err
-		}
-
-		for net, addrs := range netAddrs {
-			for _, addr := range addrs {
-				ipAddr = addr.Address
-				g.log.Debug("Use address", "network", net, "ip_address", ipAddr)
-			}
-		}
+	ipAddr, err := g.resolveIPAddress(srv)
+	if err != nil {
+		return provider.ConnectInfo{}, err
 	}
 
 	info := provider.ConnectInfo{
@@ -473,6 +490,62 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, instanceID string) (pro
 	}
 
 	return info, nil
+}
+
+// heartbeatDialTimeout bounds the TCP probe in Heartbeat. It must stay well
+// under the 30-minute SSH-connect timeout gitlab-runner itself hits when a
+// broken instance is handed to a job (the whole reason Heartbeat exists) -
+// 5s is enough slack for a loaded hypervisor/slow network without letting a
+// stuck instance stall the taskscaler's heartbeat loop.
+const heartbeatDialTimeout = 5 * time.Second
+
+// Heartbeat reports whether instanceID is still reachable. Without this,
+// the taskscaler treats any instance in StateRunning as healthy forever and
+// keeps assigning it jobs even after it stops responding - which is exactly
+// what happened in the 2026-08-31 incident (a dead instance ate 30 minutes
+// per job, repeatedly, until it aged out on its own).
+func (g *InstanceGroup) Heartbeat(ctx context.Context, instanceID string) error {
+	id, err := g.resolveInstanceID(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("heartbeat: resolving instance %s: %w", instanceID, err)
+	}
+
+	srv, err := g.client.GetServer(ctx, id)
+	if err != nil {
+		return fmt.Errorf("heartbeat: getting server %s (%s): %w", instanceID, id, err)
+	}
+
+	if srv.Status != "ACTIVE" {
+		return fmt.Errorf("heartbeat: instance %s status is %s: %w", instanceID, srv.Status, provider.ErrInstanceUnhealthy)
+	}
+
+	ipAddr, err := g.resolveIPAddress(srv)
+	if err != nil {
+		return fmt.Errorf("heartbeat: instance %s: %w", instanceID, err)
+	}
+	if ipAddr == "" {
+		return fmt.Errorf("heartbeat: instance %s is ACTIVE but has no address: %w", instanceID, provider.ErrInstanceUnhealthy)
+	}
+
+	// The plugin doesn't support Windows in practice (see the warning in
+	// ConnectInfo), so SSH's port is the only one worth probing here.
+	port := g.settings.ProtocolPort
+	if port == 0 {
+		port = provider.DefaultProtocolPorts[provider.ProtocolSSH]
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, heartbeatDialTimeout)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(dialCtx, "tcp", net.JoinHostPort(ipAddr, strconv.Itoa(port)))
+	if err != nil {
+		g.log.Debug("heartbeat: instance unreachable", "instance", instanceID, "address", ipAddr, "port", port, "error", err)
+		return fmt.Errorf("heartbeat: instance %s unreachable at %s:%d: %w", instanceID, ipAddr, port, provider.ErrInstanceUnhealthy)
+	}
+	_ = conn.Close()
+
+	return nil
 }
 
 func (g *InstanceGroup) Shutdown(ctx context.Context) error {

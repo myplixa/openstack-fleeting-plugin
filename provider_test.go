@@ -2,6 +2,8 @@ package fpoc
 
 import (
 	"context"
+	"errors"
+	"net"
 	"testing"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
@@ -179,4 +181,67 @@ func TestConnectInfo_ResolvesNameToUUIDAndKeepsNameAsID(t *testing.T) {
 
 	// but the real OpenStack API call underneath must have used the UUID
 	require.Equal(t, []string{"11111111-1111-1111-1111-111111111111"}, stub.getServerIDsSeen)
+}
+
+func TestHeartbeat_ReachableInstance(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, l.Close()) }()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	stub := &stubClient{
+		servers: []servers.Server{
+			{ID: "uuid-1", Name: "vm-1", Status: "ACTIVE", AccessIPv4: "127.0.0.1"},
+		},
+	}
+	g := newTestGroup(stub)
+	g.settings.ProtocolPort = port
+
+	require.NoError(t, g.Heartbeat(context.Background(), "vm-1"))
+}
+
+func TestHeartbeat_UnreachableInstance(t *testing.T) {
+	// Bind then immediately close: the port is now guaranteed free but
+	// nothing is listening, so the dial fails fast with connection refused
+	// instead of actually waiting out heartbeatDialTimeout.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+
+	stub := &stubClient{
+		servers: []servers.Server{
+			{ID: "uuid-1", Name: "vm-1", Status: "ACTIVE", AccessIPv4: "127.0.0.1"},
+		},
+	}
+	g := newTestGroup(stub)
+	g.settings.ProtocolPort = port
+
+	err = g.Heartbeat(context.Background(), "vm-1")
+	require.Error(t, err)
+	require.ErrorIs(t, err, provider.ErrInstanceUnhealthy)
+}
+
+func TestHeartbeat_NonActiveStatus(t *testing.T) {
+	stub := &stubClient{
+		servers: []servers.Server{
+			{ID: "uuid-1", Name: "vm-1", Status: "SHUTOFF", AccessIPv4: "127.0.0.1"},
+		},
+	}
+	g := newTestGroup(stub)
+
+	err := g.Heartbeat(context.Background(), "vm-1")
+	require.Error(t, err)
+	require.ErrorIs(t, err, provider.ErrInstanceUnhealthy)
+	// no network dial should have been attempted for a non-ACTIVE instance
+}
+
+func TestHeartbeat_UnknownInstance(t *testing.T) {
+	stub := &stubClient{}
+	g := newTestGroup(stub)
+
+	err := g.Heartbeat(context.Background(), "does-not-exist")
+	require.Error(t, err)
+	require.False(t, errors.Is(err, provider.ErrInstanceUnhealthy),
+		"a resolve failure is a transient/API problem, not a confirmed-unhealthy instance")
 }
