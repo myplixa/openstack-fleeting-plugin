@@ -540,7 +540,11 @@ func (g *InstanceGroup) Heartbeat(ctx context.Context, instanceID string) error 
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(dialCtx, "tcp", net.JoinHostPort(ipAddr, strconv.Itoa(port)))
 	if err != nil {
-		g.log.Debug("heartbeat: instance unreachable", "instance", instanceID, "address", ipAddr, "port", port, "error", err)
+		// Warn, not Debug: gitlab-runner runs at the "info" level by default
+		// and silently drops Debug lines, which would make Heartbeat
+		// completely invisible in production logs on its one interesting
+		// path (the failure that's supposed to trigger eviction).
+		g.log.Warn("heartbeat: instance unreachable", "instance", instanceID, "address", ipAddr, "port", port, "error", err)
 		return fmt.Errorf("heartbeat: instance %s unreachable at %s:%d: %w", instanceID, ipAddr, port, provider.ErrInstanceUnhealthy)
 	}
 	_ = conn.Close()
