@@ -11,13 +11,13 @@ require (
 	github.com/coreos/vcontext v0.0.0-20231102161604-685dc7299dc5
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
-	github.com/gophercloud/gophercloud/v2 v2.7.0
+	github.com/gophercloud/gophercloud/v2 v2.15.0
 	github.com/gophercloud/utils/v2 v2.0.0-20250505075637-4ac8ddd08bb6
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/jinzhu/copier v0.4.0
 	github.com/stretchr/testify v1.11.1
 	gitlab.com/gitlab-org/fleeting/fleeting v0.0.0-20260304132817-7f6dd45d4237
-	golang.org/x/crypto v0.48.0
+	golang.org/x/crypto v0.55.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -59,10 +59,10 @@ require (
 	github.com/vincent-petithory/dataurl v1.0.0 // indirect
 	gitlab.com/gitlab-org/go/reopen v1.0.0 // indirect
 	gitlab.com/gitlab-org/labkit v1.43.0 // indirect
-	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251213004720-97cd9d5aeac2 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
