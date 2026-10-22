@@ -2,7 +2,7 @@ module github.com/myplixa/openstack-fleeting-plugin
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 // https://gist.github.com/mitchellh/90029601268e59a29e64e55bab1c5bdc
 replace github.com/mitchellh/mapstructure => github.com/go-viper/mapstructure v1.6.0
