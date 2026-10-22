@@ -21,14 +21,14 @@ func TestGetImageProperties(t *testing.T) {
 	img, err := os.ReadFile("../../testdata/image_get.json")
 	require.NoError(t, err)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.ServeFile(t, "", "", "application/json", string(img))
+	fakeServer.ServeFile(t, "", "", "application/json", string(img))
 
 	client := &client{
-		compute: thclient.ServiceClient(),
-		image:   thclient.ServiceClient(),
+		compute: thclient.ServiceClient(fakeServer),
+		image:   thclient.ServiceClient(fakeServer),
 	}
 
 	ctx := context.TODO()
@@ -47,14 +47,14 @@ func TestGetImageByName(t *testing.T) {
 	img, err := os.ReadFile("../../testdata/image_list_one.json")
 	require.NoError(t, err)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.ServeFile(t, "", "", "application/json", string(img))
+	fakeServer.ServeFile(t, "", "", "application/json", string(img))
 
 	client := &client{
-		compute: thclient.ServiceClient(),
-		image:   thclient.ServiceClient(),
+		compute: thclient.ServiceClient(fakeServer),
+		image:   thclient.ServiceClient(fakeServer),
 	}
 
 	ctx := context.TODO()
@@ -108,16 +108,16 @@ func TestGetFlavorByName(t *testing.T) {
 	body, err := os.ReadFile("../../testdata/flavor_list.json")
 	require.NoError(t, err)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	})
 
 	client := &client{
-		compute: thclient.ServiceClient(),
+		compute: thclient.ServiceClient(fakeServer),
 	}
 
 	ctx := context.TODO()
@@ -132,16 +132,16 @@ func TestGetFlavorByName_NotFound(t *testing.T) {
 	body, err := os.ReadFile("../../testdata/flavor_list.json")
 	require.NoError(t, err)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/flavors/detail", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	})
 
 	client := &client{
-		compute: thclient.ServiceClient(),
+		compute: thclient.ServiceClient(fakeServer),
 	}
 
 	ctx := context.TODO()
@@ -155,16 +155,16 @@ func TestGetNetworkByName(t *testing.T) {
 	body, err := os.ReadFile("../../testdata/network_list.json")
 	require.NoError(t, err)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.Mux.HandleFunc("/v2.0/networks", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/v2.0/networks", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("nad-net-dc3", r.URL.Query().Get("name"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	})
 
-	networkClient := thclient.ServiceClient()
+	networkClient := thclient.ServiceClient(fakeServer)
 	networkClient.ResourceBase = networkClient.Endpoint + "v2.0/"
 
 	client := &client{
@@ -183,14 +183,14 @@ func TestGetImageByName_Many(t *testing.T) {
 	img, err := os.ReadFile("../../testdata/image_list_many.json")
 	require.NoError(t, err)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.ServeFile(t, "", "", "application/json", string(img))
+	fakeServer.ServeFile(t, "", "", "application/json", string(img))
 
 	client := &client{
-		compute: thclient.ServiceClient(),
-		image:   thclient.ServiceClient(),
+		compute: thclient.ServiceClient(fakeServer),
+		image:   thclient.ServiceClient(fakeServer),
 	}
 
 	ctx := context.TODO()
@@ -201,11 +201,11 @@ func TestGetImageByName_Many(t *testing.T) {
 func TestCreateVolumeFromImage(t *testing.T) {
 	assert := assert.New(t)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
 	pollCount := 0
-	testhelper.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method)
 		body, _ := io.ReadAll(r.Body)
 		assert.Contains(string(body), `"availability_zone":"dc3"`)
@@ -213,14 +213,14 @@ func TestCreateVolumeFromImage(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"volume": {"id": "vol-1", "status": "creating"}}`))
 	})
-	testhelper.Mux.HandleFunc("/volumes/vol-1", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/volumes/vol-1", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodGet, r.Method)
 		pollCount++
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"volume": {"id": "vol-1", "status": "available"}}`))
 	})
 
-	client := &client{blockstorage: thclient.ServiceClient()}
+	client := &client{blockstorage: thclient.ServiceClient(fakeServer)}
 
 	ctx := context.TODO()
 	volumeID, err := client.CreateVolumeFromImage(ctx, "image-1", "ssd", 100, "dc3", "test-root")
@@ -232,20 +232,20 @@ func TestCreateVolumeFromImage(t *testing.T) {
 func TestCreateVolumeFromImage_ErrorStatus(t *testing.T) {
 	assert := assert.New(t)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
-	testhelper.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"volume": {"id": "vol-2", "status": "creating"}}`))
 	})
-	testhelper.Mux.HandleFunc("/volumes/vol-2", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/volumes/vol-2", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"volume": {"id": "vol-2", "status": "error"}}`))
 	})
 
-	client := &client{blockstorage: thclient.ServiceClient()}
+	client := &client{blockstorage: thclient.ServiceClient(fakeServer)}
 
 	ctx := context.TODO()
 	volumeID, err := client.CreateVolumeFromImage(ctx, "image-1", "ssd", 100, "dc3", "test-root")
@@ -257,17 +257,17 @@ func TestCreateVolumeFromImage_ErrorStatus(t *testing.T) {
 func TestDeleteVolume(t *testing.T) {
 	assert := assert.New(t)
 
-	testhelper.SetupHTTP()
-	defer testhelper.TeardownHTTP()
+	fakeServer := testhelper.SetupHTTP()
+	defer fakeServer.Teardown()
 
 	called := false
-	testhelper.Mux.HandleFunc("/volumes/vol-3", func(w http.ResponseWriter, r *http.Request) {
+	fakeServer.Mux.HandleFunc("/volumes/vol-3", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodDelete, r.Method)
 		called = true
 		w.WriteHeader(http.StatusAccepted)
 	})
 
-	client := &client{blockstorage: thclient.ServiceClient()}
+	client := &client{blockstorage: thclient.ServiceClient(fakeServer)}
 
 	err := client.DeleteVolume(context.TODO(), "vol-3")
 	assert.NoError(err)
