@@ -9,7 +9,7 @@ replace github.com/mitchellh/mapstructure => github.com/go-viper/mapstructure v1
 
 require (
 	github.com/caarlos0/env/v11 v11.3.1
-	github.com/coreos/ignition/v2 v2.21.0
+	github.com/coreos/ignition/v2 v2.28.0
 	github.com/coreos/vcontext v0.0.0-20231102161604-685dc7299dc5
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
@@ -26,12 +26,12 @@ require (
 require (
 	github.com/Azure/go-ntlmssp v0.1.0 // indirect
 	github.com/ChrisTrenkamp/goxpath v0.0.0-20210404020558-97928f7e12b6 // indirect
-	github.com/aws/aws-sdk-go v1.55.7 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.43.4 // indirect
 	github.com/bodgit/ntlmssp v0.0.0-20240506230425-31973bb52d9b // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/coreos/go-json v0.0.0-20231102161613-e49c8866685a // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
-	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
+	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
